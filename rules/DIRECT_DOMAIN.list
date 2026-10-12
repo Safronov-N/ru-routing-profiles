@@ -1,6 +1,6 @@
 # Автоматически сгенерировано из RoscomVPN
-# LastUpdated: 1791712618
-# Geosite ref: 202610060735
+# LastUpdated: 1791801788
+# Geosite ref: 202610120948
 # Geosite: private, category-ru, whitelist, microsoft, apple, epicgames, riot, escapefromtarkov, steam, twitch, pinterest, faceit
 # Phase: DOMAIN
 DOMAIN,asusrouter.com
@@ -174,6 +174,7 @@ DOMAIN-SUFFIX,appldnld.apple.com
 DOMAIN-SUFFIX,apple-icloud.cn
 DOMAIN-SUFFIX,appleicloud.cn
 DOMAIN-SUFFIX,applemx-icloud.com
+DOMAIN-SUFFIX,appstorrent.ru
 DOMAIN-SUFFIX,arc-apac.msn.com
 DOMAIN-SUFFIX,arkhangelsk.ru
 DOMAIN-SUFFIX,artstation.com
@@ -182,6 +183,7 @@ DOMAIN-SUFFIX,astrakhan.ru
 DOMAIN-SUFFIX,auth-nsdi.ru
 DOMAIN-SUFFIX,auto.ru
 DOMAIN-SUFFIX,autobahn.db.com
+DOMAIN-SUFFIX,autowp.ru
 DOMAIN-SUFFIX,av.ru
 DOMAIN-SUFFIX,avito.ru
 DOMAIN-SUFFIX,avito.st
@@ -463,6 +465,7 @@ DOMAIN-SUFFIX,kuper.ru
 DOMAIN-SUFFIX,kurgan.ru
 DOMAIN-SUFFIX,kursk.ru
 DOMAIN-SUFFIX,lan
+DOMAIN-SUFFIX,lava.ru
 DOMAIN-SUFFIX,lcsmerch.com
 DOMAIN-SUFFIX,lead-pro2023.online
 DOMAIN-SUFFIX,leaguehighschool.com
@@ -1022,4 +1025,5 @@ DOMAIN-SUFFIX,zdrav10.ru
 DOMAIN-SUFFIX,zenit-card.ru
 DOMAIN-SUFFIX,zentotem.net
 DOMAIN-SUFFIX,ziraatbank.ru
+DOMAIN-SUFFIX,zr.ru
 DOMAIN-SUFFIX,zte.home
