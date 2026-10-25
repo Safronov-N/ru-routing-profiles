@@ -22,7 +22,7 @@ https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main
 
 ## Профиль для Happ
 
-[`happ/happ-routing.json`](happ/happ-routing.json) и [`happ/happ-routing-link.txt`](happ/happ-routing-link.txt) содержат профиль Happ. Его `geosite.dat` и `geoip.dat` находятся в [`happ/`](happ/). Перед импортом файлы `happ/` нужно опубликовать в ветке `main`: профиль ссылается на их URL в этом репозитории. Локальная ссылка импорта до публикации geo-файлов не заработает.
+[`happ/happ-routing.json`](happ/happ-routing.json) и [`happ/happ-routing-link.txt`](happ/happ-routing-link.txt) содержат профиль Happ. Его `geosite.dat` и `geoip.dat` опубликованы в [`happ/`](happ/) ветки `main`; профиль ссылается на их URL в этом репозитории.
 
 После публикации откройте ссылку из `happ/happ-routing-link.txt` на устройстве с Happ, выберите профиль **Shadowrocket-like Happ** для нужной подписки и переподключите VPN. Фрагментацию включите отдельно в настройках подключения Happ: профиль маршрутизации её не настраивает.
 
