@@ -63,5 +63,6 @@ SOFTWARE.
   исходного профиля.
 - [`hydraponique/roscomvpn-geoip`](https://github.com/hydraponique/roscomvpn-geoip) — IP-категории.
 - [`zeklop/shadowrocket-configs`](https://github.com/zeklop/shadowrocket-configs) — дополнительный рекламный список.
+- [`Loyalsoldier/geoip`](https://github.com/Loyalsoldier/geoip) — российские IP-диапазоны для Happ; исходный список преобразован в категорию `RU` и объединён с другими категориями. Он распространяется по [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); производная категория `RU` в `happ/geoip.dat` распространяется на тех же условиях.
 
 Для этих источников действуют условия, опубликованные в соответствующих репозиториях.
