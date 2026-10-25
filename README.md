@@ -20,6 +20,18 @@ https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main
 
 Конфиг использует текущий выбранный VPN-сервер: действие `PROXY` не содержит адресов серверов, ключей или других секретов.
 
+## Профиль для Happ
+
+[`happ/happ-routing.json`](happ/happ-routing.json) и [`happ/happ-routing-link.txt`](happ/happ-routing-link.txt) содержат профиль Happ. Его `geosite.dat` и `geoip.dat` находятся в [`happ/`](happ/). Перед импортом файлы `happ/` нужно опубликовать в ветке `main`: профиль ссылается на их URL в этом репозитории. Локальная ссылка импорта до публикации geo-файлов не заработает.
+
+После публикации откройте ссылку из `happ/happ-routing-link.txt` на устройстве с Happ, выберите профиль **Shadowrocket-like Happ** для нужной подписки и переподключите VPN. Фрагментацию включите отдельно в настройках подключения Happ: профиль маршрутизации её не настраивает.
+
+Профиль использует категории RoscomVPN и переносит дополнительные правила Shadowrocket: рекламный `REJECT.list` → `geosite:shadowrocket-reject`, домены Re-filter → `geosite:shadowrocket-proxy`, IP-списки Re-filter → `geoip:shadowrocket-proxy`, закреплённый `DIRECT_IP.list` → `geoip:shadowrocket-direct`, российские IP → `geoip:ru`, национальные зоны `.ru/.рф/.su/.by` → `DIRECT`, сервисы проверки внешнего IP → `PROXY`. Гео-файлы объединяются генератором каждые 6 часов вместе с Shadowrocket-конфигом.
+
+Это перенос **маршрутизации**. DNS/fallback и `always-real-ip` Shadowrocket не имеют прямого соответствия в Happ JSON-профиле; профиль оставляет DNS-настройки RoscomVPN. Российская GeoIP-база взята из проекта Loyalsoldier, поэтому отдельные IP-решения могут отличаться от GeoLite2 Shadowrocket. Обновление локально импортированного профиля в Happ может потребовать повторного импорта; приложение не загружает geo-файлы чаще одного раза в неделю.
+
+Happ применяет смену профиля после переподключения. Если подписка содержит готовую Xray JSON-конфигурацию, Happ не разрешает вручную добавлять к ней профиль маршрутизации; его должен предоставить источник подписки.
+
 ## Маршрутизация
 
 Правила разделены на две основные фазы:
@@ -54,7 +66,7 @@ https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main
 1. `BlockIp` RoscomVPN → `REJECT`, если категория присутствует
 2. `ProxyIp` RoscomVPN → `PROXY`, если категория присутствует
 3. IP-списки Re-filter → `PROXY`
-4. `DirectIp` RoscomVPN → `DIRECT`
+4. закреплённый `DIRECT_IP.list` → `DIRECT`
 5. `GEOIP,RU` → `DIRECT`
 6. всё остальное → `PROXY`
 
@@ -83,8 +95,9 @@ DOMAIN-SUFFIX,by,DIRECT
 rules/BLOCK_DOMAIN.list
 rules/PROXY_DOMAIN.list
 rules/DIRECT_DOMAIN.list
-rules/DIRECT_IP.list
 ```
+
+`rules/DIRECT_IP.list` закреплён на проверенной версии Shadowrocket и не перезаписывается при автоматической генерации. 25 октября 2026 года upstream сократил `DirectIp` более чем на 30%; автоматический перенос такого изменения мог изменить работу российских сервисов. Happ использует этот же сохранённый список в категории `geoip:shadowrocket-direct`.
 
 Дополнительно, если соответствующие категории присутствуют в актуальном `HAPP/DEFAULT.JSON`, создаются:
 
@@ -132,13 +145,13 @@ GitHub Actions каждые 6 часов:
    - `RouteOrder=block-proxy-direct`
    - `DomainStrategy=IPIfNonMatch`
 3. Получает закреплённые версии geosite и geoip из URL самого RoscomVPN-профиля.
-4. Генерирует отдельные DOMAIN и IP ruleset'ы.
+4. Генерирует DOMAIN ruleset'ы и доступные IP ruleset'ы, сохраняя закреплённый `DIRECT_IP.list`.
 5. Не создаёт `BLOCK_IP` / `PROXY_IP`, если соответствующие upstream-категории пусты.
 6. Переносит `DnsHosts` в секцию `[Host]`.
 7. Преобразует совместимую часть `geosite:whitelist` в `always-real-ip`.
 8. Проверяет структуру доменов, CIDR, порядок DOMAIN/IP-фаз и DNS-защиту.
 9. Проверяет, что дополнительный `REJECT.list`, расположенный в DOMAIN-фазе, содержит только доменные правила.
-10. Публикует изменения только после успешной генерации и проверок.
+10. Создаёт профиль Happ и объединённые geo-файлы, затем публикует изменения только после успешной генерации и проверок.
 
 Если upstream меняется несовместимо или отдаёт некорректные данные, сборка завершается ошибкой, а последняя рабочая опубликованная версия остаётся доступной.
 
@@ -240,21 +253,22 @@ https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb
 kotlinc -script scripts/generate.main.kts
 ```
 
-Сгенерированные:
+Автоматически создаваемые:
 
 ```text
 rules/*.list
 shadowrocket.conf
+happ/*
 ```
 
-не редактируются вручную.
+не редактируются вручную, кроме отдельного пересмотра закреплённого `rules/DIRECT_IP.list`.
 
 Pull request проверяется повторной генерацией.
 
 GitHub Actions также проверяет, что после запуска генератора committed-файлы совпадают с результатом генерации:
 
 ```bash
-git diff --exit-code -- rules shadowrocket.conf
+git diff --exit-code -- rules shadowrocket.conf happ
 ```
 
 ## Источники и лицензии

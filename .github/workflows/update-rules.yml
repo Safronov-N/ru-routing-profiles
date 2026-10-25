@@ -1,4 +1,4 @@
-name: Update Shadowrocket rules
+name: Update Shadowrocket and Happ rules
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - shadowrocket.template.conf
       - shadowrocket.conf
       - rules/**
+      - happ/**
   pull_request:
     paths:
       - .github/workflows/update-rules.yml
@@ -15,6 +16,7 @@ on:
       - shadowrocket.template.conf
       - shadowrocket.conf
       - rules/**
+      - happ/**
       - examples/macos-resolver/**
   schedule:
     - cron: "17 */6 * * *"
@@ -50,6 +52,10 @@ jobs:
       - name: Проверить служебные файлы
         run: |
           test -s shadowrocket.conf
+          test -s happ/happ-routing.json
+          test -s happ/happ-routing-link.txt
+          test -s happ/geosite.dat
+          test -s happ/geoip.dat
           test -s examples/macos-resolver/mdb.yandexcloud.net.example
           grep -Fxq '[Host]' shadowrocket.conf
           grep -Fxq 'nameserver VPC_DNS_IP_1' examples/macos-resolver/mdb.yandexcloud.net.example
@@ -57,7 +63,7 @@ jobs:
           ! grep '^always-real-ip = ' shadowrocket.conf | grep -Fq 'yandexcloud.net'
 
       - name: Проверить актуальность generated-файлов
-        run: git diff --exit-code -- rules shadowrocket.conf
+        run: git diff --exit-code -- rules shadowrocket.conf happ
 
   update:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -80,12 +86,12 @@ jobs:
 
       - name: Опубликовать изменения
         run: |
-          if ! git status --porcelain -- rules shadowrocket.conf | grep -q .; then
+          if ! git status --porcelain -- rules shadowrocket.conf happ | grep -q .; then
             echo "Правила не изменились"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rules shadowrocket.conf
-          git commit -m "Обновить профиль и правила из RoscomVPN"
+          git add rules shadowrocket.conf happ
+          git commit -m "Обновить профили Shadowrocket и Happ"
           git push

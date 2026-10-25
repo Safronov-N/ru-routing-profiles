@@ -1,5 +1,6 @@
 #!/usr/bin/env kotlin
 
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -10,6 +11,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.Base64
 
 data class RouteSpec(
     val name: String,
@@ -31,6 +33,7 @@ val httpClient =
         .build()
 
 val downloadCache = mutableMapOf<String, String>()
+val binaryDownloadCache = mutableMapOf<String, ByteArray>()
 
 fun download(url: String): String {
     downloadCache[url]?.let { return it }
@@ -70,6 +73,44 @@ fun download(url: String): String {
         }
     }
 
+    error("Не удалось скачать $url после 4 попыток: $lastFailure")
+}
+
+fun downloadBytes(url: String): ByteArray {
+    binaryDownloadCache[url]?.let { return it }
+    var lastFailure = "неизвестная ошибка"
+    repeat(4) { attempt ->
+        val request =
+            HttpRequest
+                .newBuilder(URI.create(url))
+                .header("User-Agent", "shadowrocket-roscomvpn-routing")
+                .timeout(Duration.ofSeconds(60))
+                .GET()
+                .build()
+        try {
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray())
+            if (response.statusCode() in 200..299) {
+                val body = response.body()
+                check(body.isNotEmpty() && body.size <= 20_000_000) { "Некорректный размер $url: ${body.size}" }
+                binaryDownloadCache[url] = body
+                return body
+            }
+
+            lastFailure = "HTTP ${response.statusCode()}"
+            check(response.statusCode() == 429 || response.statusCode() in 500..599) {
+                "Не удалось скачать $url: $lastFailure"
+            }
+        } catch (error: IOException) {
+            lastFailure = error.message ?: error.javaClass.simpleName
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw error
+        }
+
+        if (attempt < 3) {
+            Thread.sleep(2_000L shl attempt)
+        }
+    }
     error("Не удалось скачать $url после 4 попыток: $lastFailure")
 }
 
@@ -253,6 +294,163 @@ fun jsonStringMap(json: JsonObjectValue, key: String): Map<String, String> {
         (value as? JsonStringValue)?.value
             ?: error("Значение $nestedKey объекта $key должно быть строкой")
     }
+}
+
+fun jsonQuote(value: String): String =
+    buildString {
+        append('"')
+        value.forEach { character ->
+            when (character) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (character.code < 0x20) {
+                    append("\\u${character.code.toString(16).padStart(4, '0')}")
+                } else {
+                    append(character)
+                }
+            }
+        }
+        append('"')
+    }
+
+fun renderJson(value: JsonValue, depth: Int = 0): String =
+    when (value) {
+        is JsonStringValue -> jsonQuote(value.value)
+        is JsonLiteralValue -> value.value
+        is JsonArrayValue -> {
+            if (value.values.isEmpty()) {
+                "[]"
+            } else {
+                value.values.joinToString(",\n", "[\n", "\n${"  ".repeat(depth)}]") { item ->
+                    "${"  ".repeat(depth + 1)}${renderJson(item, depth + 1)}"
+                }
+            }
+        }
+        is JsonObjectValue -> {
+            if (value.values.isEmpty()) {
+                "{}"
+            } else {
+                value.values.entries.joinToString(",\n", "{\n", "\n${"  ".repeat(depth)}}") { (key, item) ->
+                    "${"  ".repeat(depth + 1)}${jsonQuote(key)}: ${renderJson(item, depth + 1)}"
+                }
+            }
+        }
+    }
+
+fun addJsonRules(json: MutableMap<String, JsonValue>, key: String, additions: List<String>) {
+    val existing = jsonArray(JsonObjectValue(json), key)
+    json[key] = JsonArrayValue((existing + additions).distinct().map(::JsonStringValue))
+}
+
+fun ByteArrayOutputStream.writeVarint(number: Int) {
+    require(number >= 0) { "Отрицательное protobuf-число: $number" }
+    var remaining = number
+    while (remaining >= 0x80) {
+        write((remaining and 0x7f) or 0x80)
+        remaining = remaining ushr 7
+    }
+    write(remaining)
+}
+
+fun protobufBytes(field: Int, value: ByteArray): ByteArray =
+    ByteArrayOutputStream().apply {
+        writeVarint((field shl 3) or 2)
+        writeVarint(value.size)
+        write(value)
+    }.toByteArray()
+
+fun protobufNumber(field: Int, value: Int): ByteArray =
+    ByteArrayOutputStream().apply {
+        writeVarint(field shl 3)
+        writeVarint(value)
+    }.toByteArray()
+
+fun protobufString(field: Int, value: String): ByteArray =
+    protobufBytes(field, value.toByteArray(Charsets.UTF_8))
+
+fun readVarint(bytes: ByteArray, start: Int): Pair<Int, Int> {
+    var value = 0
+    var offset = start
+    var shift = 0
+    while (offset < bytes.size && shift <= 28) {
+        val byte = bytes[offset++].toInt() and 0xff
+        value = value or ((byte and 0x7f) shl shift)
+        if (byte < 0x80) {
+            return value to offset
+        }
+        shift += 7
+    }
+    error("Некорректный protobuf varint в позиции $start")
+}
+
+fun geoCategoryNames(bytes: ByteArray): Set<String> {
+    val names = mutableSetOf<String>()
+    var offset = 0
+    while (offset < bytes.size) {
+        val (tag, afterTag) = readVarint(bytes, offset)
+        check(tag == 10) { "Некорректный protobuf GeoList в позиции $offset" }
+        val (length, start) = readVarint(bytes, afterTag)
+        check(length > 0 && length <= bytes.size - start) { "Некорректная длина GeoList" }
+        val (nameTag, afterNameTag) = readVarint(bytes, start)
+        check(nameTag == 10) { "В GeoList отсутствует имя категории" }
+        val (nameLength, nameStart) = readVarint(bytes, afterNameTag)
+        check(nameLength in 1..128 && nameLength <= start + length - nameStart) { "Некорректное имя категории" }
+        val name = String(bytes, nameStart, nameLength, Charsets.UTF_8).uppercase()
+        check(names.add(name)) { "Повторяется geo-категория $name" }
+        offset = start + length
+    }
+    return names
+}
+
+fun geositeEntry(name: String, rules: List<String>): ByteArray {
+    val entry = ByteArrayOutputStream()
+    entry.write(protobufString(1, name.uppercase()))
+    rules.distinct().forEach { rule ->
+        val type = rule.substringBefore(',')
+        val value = rule.substringAfter(',', "")
+        check(value.isNotEmpty()) { "Некорректное доменное правило: $rule" }
+        val domainType =
+            when (type) {
+                "DOMAIN-KEYWORD" -> 0
+                "DOMAIN-SUFFIX" -> 2
+                "DOMAIN" -> 3
+                else -> error("Нельзя перенести $rule в Happ geosite.dat")
+            }
+        val domain = ByteArrayOutputStream()
+        domain.write(protobufNumber(1, domainType))
+        domain.write(protobufString(2, value))
+        entry.write(protobufBytes(2, domain.toByteArray()))
+    }
+    return protobufBytes(1, entry.toByteArray())
+}
+
+fun geoipEntry(name: String, ranges: List<String>): ByteArray {
+    val entry = ByteArrayOutputStream()
+    entry.write(protobufString(1, name.uppercase()))
+    ranges.distinct().forEach { range ->
+        cidrRule(range, name)
+        val address = range.substringBefore('/')
+        val prefix = range.substringAfter('/').toInt()
+        val cidr = ByteArrayOutputStream()
+        cidr.write(protobufBytes(1, InetAddress.getByName(address).address))
+        cidr.write(protobufNumber(2, prefix))
+        entry.write(protobufBytes(2, cidr.toByteArray()))
+    }
+    return protobufBytes(1, entry.toByteArray())
+}
+
+fun appendGeoEntries(base: ByteArray, entries: List<Pair<String, ByteArray>>): ByteArray {
+    val existing = geoCategoryNames(base)
+    entries.forEach { (name, _) ->
+        check(name.uppercase() !in existing) { "Geo-категория $name уже есть в RoscomVPN" }
+    }
+    return ByteArrayOutputStream().apply {
+        write(base)
+        entries.forEach { (_, bytes) -> write(bytes) }
+    }.toByteArray()
 }
 
 fun pinnedRef(
@@ -499,7 +697,10 @@ fun categoryName(reference: String, prefix: String): String {
     return validateCategory(reference.removePrefix(expectedPrefix))
 }
 
-val routing = StrictJsonParser(download(routingUrl)).parseDocument()
+val routingSource =
+    System.getenv("ROUTING_SOURCE_FILE")?.let { path -> Files.readString(Path.of(path)) }
+        ?: download(routingUrl)
+val routing = StrictJsonParser(routingSource).parseDocument()
 val lastUpdated = jsonString(routing, "LastUpdated")
 check(lastUpdated.isNotEmpty() && lastUpdated.all { it.isDigit() }) {
     "LastUpdated должен содержать Unix timestamp: $lastUpdated"
@@ -575,8 +776,16 @@ val specs =
 
 val outputDirectory = Path.of("rules")
 val generatedFiles = linkedMapOf<Path, String>()
+val generatedBinaryFiles = linkedMapOf<Path, ByteArray>()
 val generatedRuleCounts = linkedMapOf<String, Int>()
 val generatedIpRuleSets = mutableMapOf<String, Boolean>()
+val preservedDirectIpPath = outputDirectory.resolve("DIRECT_IP.list")
+check(Files.isRegularFile(preservedDirectIpPath)) { "Отсутствует закреплённый DIRECT_IP.list" }
+val preservedDirectIpRules = normalizedLines(Files.readString(preservedDirectIpPath))
+check(preservedDirectIpRules.size >= 30_000) { "Закреплённый DIRECT_IP.list неожиданно мал" }
+check(preservedDirectIpRules.all { it.startsWith("IP-CIDR,") || it.startsWith("IP-CIDR6,") }) {
+    "Закреплённый DIRECT_IP.list содержит не IP-CIDR правило"
+}
 
 specs.forEach { spec ->
     val siteCategories =
@@ -650,7 +859,10 @@ specs.forEach { spec ->
 
     generatedIpRuleSets[spec.name] = hasIpCategories
 
-    if (hasIpCategories) {
+    if (hasIpCategories && spec.name == "DIRECT") {
+        // Сохраняем проверенный DirectIp: upstream резко сократил список 25 октября 2026 года.
+        generatedRuleCounts[spec.ipFileName] = preservedDirectIpRules.size
+    } else if (hasIpCategories) {
         validateGeneratedRuleCount(ipPath, ipRules)
 
         val ipContent =
@@ -725,14 +937,16 @@ val additionalRejectUrl =
     "https://raw.githubusercontent.com/zeklop/shadowrocket-configs/main/REJECT.list"
 
 val additionalRejectRules =
-    normalizedLines(download(additionalRejectUrl))
+    normalizedLines(
+        System.getenv("REJECT_SOURCE_FILE")?.let { path -> Files.readString(Path.of(path)) }
+            ?: download(additionalRejectUrl)
+    )
 
 val allowedDomainRulePrefixes =
     listOf(
         "DOMAIN,",
         "DOMAIN-SUFFIX,",
-        "DOMAIN-KEYWORD,",
-        "DOMAIN-WILDCARD,"
+        "DOMAIN-KEYWORD,"
     )
 
 check(
@@ -950,6 +1164,85 @@ check(
 
 generatedFiles[Path.of("shadowrocket.conf")] = shadowrocketConfig
 
+val reFilterBaseUrl = "https://cdn.jsdelivr.net/gh/1andrevich/Re-filter-lists@main"
+val reFilterDomainRules =
+    listOf("domains_all.lst", "community.lst")
+        .flatMap { fileName ->
+            normalizedLines(download("$reFilterBaseUrl/$fileName"))
+                .map { domain -> "DOMAIN-SUFFIX,${validateDomain(domain, fileName)}" }
+        }
+        .distinct()
+val reFilterIpRanges =
+    listOf("ipsum.lst", "community_ips.lst", "discord_ips.lst")
+        .flatMap { fileName -> normalizedLines(download("$reFilterBaseUrl/$fileName")) }
+        .distinct()
+val russianIpRanges =
+    normalizedLines(download("https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/text/ru.txt"))
+        .distinct()
+check(reFilterDomainRules.size >= 50_000) { "Re-filter неожиданно потерял домены" }
+check(reFilterIpRanges.size >= 20_000) { "Re-filter неожиданно потерял IP-диапазоны" }
+check(russianIpRanges.size >= 15_000) { "GeoIP RU неожиданно потерял IP-диапазоны" }
+
+val happGeosite =
+    appendGeoEntries(
+        downloadBytes(jsonString(routing, "Geositeurl")),
+        listOf(
+            "SHADOWROCKET-REJECT" to geositeEntry("SHADOWROCKET-REJECT", additionalRejectRules),
+            "SHADOWROCKET-PROXY" to geositeEntry("SHADOWROCKET-PROXY", reFilterDomainRules)
+        )
+    )
+val happGeoip =
+    appendGeoEntries(
+        downloadBytes(jsonString(routing, "Geoipurl")),
+        listOf(
+            "SHADOWROCKET-PROXY" to geoipEntry("SHADOWROCKET-PROXY", reFilterIpRanges),
+            "SHADOWROCKET-DIRECT" to geoipEntry(
+                "SHADOWROCKET-DIRECT",
+                preservedDirectIpRules.map { rule -> rule.substringAfter(',') }
+            ),
+            "RU" to geoipEntry("RU", russianIpRanges)
+        )
+    )
+check(geoCategoryNames(happGeosite).containsAll(setOf("SHADOWROCKET-REJECT", "SHADOWROCKET-PROXY"))) {
+    "В Happ geosite.dat отсутствуют дополнительные категории"
+}
+check(geoCategoryNames(happGeoip).containsAll(setOf("SHADOWROCKET-PROXY", "SHADOWROCKET-DIRECT", "RU"))) {
+    "В Happ geoip.dat отсутствуют дополнительные категории"
+}
+
+val happFields = routing.values.toMutableMap()
+happFields["Name"] = JsonStringValue("Shadowrocket-like Happ")
+happFields["Geositeurl"] =
+    JsonStringValue(
+        "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat"
+    )
+happFields["Geoipurl"] =
+    JsonStringValue(
+        "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat"
+    )
+addJsonRules(happFields, "BlockSites", listOf("geosite:shadowrocket-reject"))
+addJsonRules(
+    happFields,
+    "ProxySites",
+    listOf("geosite:shadowrocket-proxy") + ipCheckProxyDomains.sorted().map { domain -> "domain:$domain" }
+)
+addJsonRules(happFields, "ProxyIp", listOf("geoip:shadowrocket-proxy"))
+addJsonRules(happFields, "DirectSites", listOf("domain:ru", "domain:xn--p1ai", "domain:su", "domain:by"))
+check(jsonArray(routing, "DirectIp") == listOf("geoip:private", "geoip:direct")) {
+    "Состав DirectIp upstream изменился; закреплённый Happ-профиль требует проверки"
+}
+happFields["DirectIp"] =
+    JsonArrayValue(
+        listOf("geoip:private", "geoip:shadowrocket-direct", "geoip:ru").map(::JsonStringValue)
+    )
+val happJson = "${renderJson(JsonObjectValue(happFields))}\n"
+val happLink =
+    "happ://routing/add/${Base64.getEncoder().encodeToString(happJson.toByteArray(Charsets.UTF_8))}\n"
+generatedFiles[Path.of("happ/happ-routing.json")] = happJson
+generatedFiles[Path.of("happ/happ-routing-link.txt")] = happLink
+generatedBinaryFiles[Path.of("happ/geosite.dat")] = happGeosite
+generatedBinaryFiles[Path.of("happ/geoip.dat")] = happGeoip
+
 val legacyRuleFiles =
     listOf(
         "BLOCK.list",
@@ -962,7 +1255,11 @@ legacyRuleFiles.forEach { fileName ->
 }
 
 Files.createDirectories(outputDirectory)
+Files.createDirectories(Path.of("happ"))
 generatedFiles.forEach { (path, content) -> Files.writeString(path, content) }
+generatedBinaryFiles.forEach { (path, content) -> Files.write(path, content) }
 generatedRuleCounts.forEach { (fileName, count) -> println("$fileName: $count правил") }
 println("shadowrocket.conf: ${shadowrocketAlwaysRealIpPatterns.size} шаблонов always-real-ip")
 println("shadowrocket.conf: ${dnsHosts.size} записей DnsHosts")
+println("happ: ${reFilterDomainRules.size} Re-filter доменов")
+println("happ: ${reFilterIpRanges.size} Re-filter IP-диапазонов")

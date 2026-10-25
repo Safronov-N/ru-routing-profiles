@@ -1,0 +1,72 @@
+{
+  "Name": "Shadowrocket-like Happ",
+  "GlobalProxy": "true",
+  "UseChunkFiles": "true",
+  "RemoteDns": "8.8.8.8",
+  "DomesticDns": "77.88.8.8",
+  "RemoteDNSType": "DoH",
+  "RemoteDNSDomain": "https://8.8.8.8/dns-query",
+  "RemoteDNSIP": "8.8.8.8",
+  "DomesticDNSType": "DoH",
+  "DomesticDNSDomain": "https://77.88.8.8/dns-query",
+  "DomesticDNSIP": "77.88.8.8",
+  "Geoipurl": "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat",
+  "Geositeurl": "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat",
+  "LastUpdated": "1792916487",
+  "DnsHosts": {
+    "lkfl2.nalog.ru": "213.24.64.175",
+    "lknpd.nalog.ru": "213.24.64.181"
+  },
+  "RouteOrder": "block-proxy-direct",
+  "DirectSites": [
+    "geosite:private",
+    "geosite:category-ru",
+    "geosite:whitelist",
+    "geosite:microsoft",
+    "geosite:apple",
+    "geosite:epicgames",
+    "geosite:riot",
+    "geosite:escapefromtarkov",
+    "geosite:steam",
+    "geosite:twitch",
+    "geosite:pinterest",
+    "geosite:faceit",
+    "domain:ru",
+    "domain:xn--p1ai",
+    "domain:su",
+    "domain:by"
+  ],
+  "DirectIp": [
+    "geoip:private",
+    "geoip:shadowrocket-direct",
+    "geoip:ru"
+  ],
+  "ProxySites": [
+    "geosite:google-play",
+    "geosite:github",
+    "geosite:twitch-ads",
+    "geosite:youtube",
+    "geosite:telegram",
+    "geosite:shadowrocket-proxy",
+    "domain:2ip.ru",
+    "domain:checkip.amazonaws.com",
+    "domain:ifconfig.me",
+    "domain:ip.sb",
+    "domain:ipapi.is",
+    "domain:ipify.org",
+    "domain:iplocate.io",
+    "domain:showip.net"
+  ],
+  "ProxyIp": [
+    "geoip:shadowrocket-proxy"
+  ],
+  "BlockSites": [
+    "geosite:win-spy",
+    "geosite:torrent",
+    "geosite:category-ads",
+    "geosite:shadowrocket-reject"
+  ],
+  "BlockIp": [],
+  "DomainStrategy": "IPIfNonMatch",
+  "FakeDNS": "false"
+}
