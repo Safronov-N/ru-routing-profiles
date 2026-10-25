@@ -1235,6 +1235,29 @@ happFields["DirectIp"] =
     JsonArrayValue(
         listOf("geoip:private", "geoip:shadowrocket-direct", "geoip:ru").map(::JsonStringValue)
     )
+val previousHappPath = Path.of("happ/happ-routing.json")
+val previousHapp =
+    if (Files.isRegularFile(previousHappPath)) {
+        StrictJsonParser(Files.readString(previousHappPath)).parseDocument()
+    } else {
+        null
+    }
+val previousHappTimestamp =
+    (previousHapp?.values?.get("LastUpdated") as? JsonStringValue)?.value?.toLongOrNull() ?: 0L
+val happDataChanged =
+    previousHapp?.values?.filterKeys { key -> key != "LastUpdated" } !=
+        happFields.filterKeys { key -> key != "LastUpdated" } ||
+        !Files.isRegularFile(Path.of("happ/geosite.dat")) ||
+        !Files.readAllBytes(Path.of("happ/geosite.dat")).contentEquals(happGeosite) ||
+        !Files.isRegularFile(Path.of("happ/geoip.dat")) ||
+        !Files.readAllBytes(Path.of("happ/geoip.dat")).contentEquals(happGeoip)
+val happTimestamp =
+    if (happDataChanged) {
+        maxOf(lastUpdated.toLong(), previousHappTimestamp + 1, System.currentTimeMillis() / 1_000)
+    } else {
+        maxOf(lastUpdated.toLong(), previousHappTimestamp)
+    }
+happFields["LastUpdated"] = JsonStringValue(happTimestamp.toString())
 val happJson = "${renderJson(JsonObjectValue(happFields))}\n"
 val happLink =
     "happ://routing/add/${Base64.getEncoder().encodeToString(happJson.toByteArray(Charsets.UTF_8))}\n"
