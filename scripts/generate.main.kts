@@ -11,19 +11,8 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.time.Instant
 import java.util.Base64
-
-data class RouteSpec(
-    val name: String,
-    val domainFileName: String,
-    val ipFileName: String,
-    val siteKey: String,
-    val ipKey: String,
-    val minimumRuleCount: Int
-)
-
-val routingUrl =
-    "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/HAPP/DEFAULT.JSON"
 
 val httpClient =
     HttpClient
@@ -33,20 +22,23 @@ val httpClient =
         .build()
 
 val downloadCache = mutableMapOf<String, String>()
-val binaryDownloadCache = mutableMapOf<String, ByteArray>()
 
 fun download(url: String): String {
     downloadCache[url]?.let { return it }
     var lastFailure = "неизвестная ошибка"
 
     repeat(4) { attempt ->
-        val request =
+        val requestBuilder =
             HttpRequest
                 .newBuilder(URI.create(url))
-                .header("User-Agent", "shadowrocket-roscomvpn-routing")
+                .header("User-Agent", "independent-ru-routing")
                 .timeout(Duration.ofSeconds(60))
-                .GET()
-                .build()
+        if (URI.create(url).host == "api.github.com") {
+            System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() }?.let { token ->
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
+        }
+        val request = requestBuilder.GET().build()
         try {
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
             if (response.statusCode() in 200..299) {
@@ -76,44 +68,6 @@ fun download(url: String): String {
     error("Не удалось скачать $url после 4 попыток: $lastFailure")
 }
 
-fun downloadBytes(url: String): ByteArray {
-    binaryDownloadCache[url]?.let { return it }
-    var lastFailure = "неизвестная ошибка"
-    repeat(4) { attempt ->
-        val request =
-            HttpRequest
-                .newBuilder(URI.create(url))
-                .header("User-Agent", "shadowrocket-roscomvpn-routing")
-                .timeout(Duration.ofSeconds(60))
-                .GET()
-                .build()
-        try {
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray())
-            if (response.statusCode() in 200..299) {
-                val body = response.body()
-                check(body.isNotEmpty() && body.size <= 20_000_000) { "Некорректный размер $url: ${body.size}" }
-                binaryDownloadCache[url] = body
-                return body
-            }
-
-            lastFailure = "HTTP ${response.statusCode()}"
-            check(response.statusCode() == 429 || response.statusCode() in 500..599) {
-                "Не удалось скачать $url: $lastFailure"
-            }
-        } catch (error: IOException) {
-            lastFailure = error.message ?: error.javaClass.simpleName
-        } catch (error: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw error
-        }
-
-        if (attempt < 3) {
-            Thread.sleep(2_000L shl attempt)
-        }
-    }
-    error("Не удалось скачать $url после 4 попыток: $lastFailure")
-}
-
 sealed interface JsonValue
 
 data class JsonStringValue(val value: String) : JsonValue
@@ -134,7 +88,17 @@ class StrictJsonParser(private val source: String) {
             "После JSON обнаружены лишние данные в позиции $index"
         }
         return value as? JsonObjectValue
-            ?: error("Корневое значение DEFAULT.JSON должно быть объектом")
+            ?: error("Корневое значение JSON должно быть объектом")
+    }
+
+    fun parseArrayDocument(): JsonArrayValue {
+        val value = parseValue()
+        skipWhitespace()
+        check(index == source.length) {
+            "После JSON обнаружены лишние данные в позиции $index"
+        }
+        return value as? JsonArrayValue
+            ?: error("Корневое значение ответа GitHub должно быть массивом")
     }
 
     private fun parseValue(): JsonValue {
@@ -274,25 +238,49 @@ class StrictJsonParser(private val source: String) {
 }
 
 fun jsonString(json: JsonObjectValue, key: String): String {
-    val value = json.values[key] ?: error("В DEFAULT.JSON отсутствует поле $key")
+    val value = json.values[key] ?: error("В JSON отсутствует поле $key")
     return (value as? JsonStringValue)?.value ?: error("Поле $key должно быть строкой")
 }
 
-fun jsonArray(json: JsonObjectValue, key: String): List<String> {
-    val array = json.values[key] as? JsonArrayValue ?: error("Поле $key должно быть массивом")
-    return array.values.mapIndexed { index, value ->
-        (value as? JsonStringValue)?.value
-            ?: error("Элемент $index массива $key должен быть строкой")
+fun jsonObject(json: JsonObjectValue, key: String): JsonObjectValue =
+    json.values[key] as? JsonObjectValue
+        ?: error("Поле $key должно быть объектом")
+
+fun commitDate(commit: JsonObjectValue): Instant =
+    Instant.parse(jsonString(jsonObject(jsonObject(commit, "commit"), "committer"), "date"))
+
+fun latestBranchCommit(repository: String, branch: String): String {
+    require(Regex("[A-Za-z0-9._-]+/[A-Za-z0-9._-]+").matches(repository)) {
+        "Некорректный GitHub-репозиторий: $repository"
     }
+    require(branch in setOf("main", "master", "release")) { "Неизвестная ветка: $branch" }
+    val response = StrictJsonParser(download("https://api.github.com/repos/$repository/commits/$branch"))
+        .parseDocument()
+    val sha = jsonString(response, "sha")
+    check(Regex("[a-f0-9]{40}").matches(sha)) {
+        "Некорректный SHA коммита $repository/$branch: $sha"
+    }
+    return sha
 }
 
-fun jsonStringMap(json: JsonObjectValue, key: String): Map<String, String> {
-    val objectValue =
-        json.values[key] as? JsonObjectValue
-            ?: error("Поле $key должно быть объектом")
-    return objectValue.values.mapValues { (nestedKey, value) ->
-        (value as? JsonStringValue)?.value
-            ?: error("Значение $nestedKey объекта $key должно быть строкой")
+fun latestFileChangeDate(repository: String, path: String, commit: String): Instant {
+    require(Regex("[a-f0-9]{40}").matches(commit)) { "Некорректный SHA для $repository/$path" }
+    val url = "https://api.github.com/repos/$repository/commits?path=$path&sha=$commit&per_page=1"
+    val commits = StrictJsonParser(download(url)).parseArrayDocument().values
+    val firstCommit = commits.singleOrNull() as? JsonObjectValue
+        ?: error("GitHub не вернул коммит $repository/$path")
+    return commitDate(firstCommit)
+}
+
+fun reportSourceFreshness(name: String, updatedAt: Instant, maxAge: Duration) {
+    val age = Duration.between(updatedAt, Instant.now())
+    if (age.isNegative) {
+        println("::warning::Источник $name имеет дату из будущего: $updatedAt")
+        return
+    }
+    if (age > maxAge) {
+        val message = "Источник $name не менялся ${age.toDays()} дн. (последний коммит $updatedAt)"
+        println("::warning::$message")
     }
 }
 
@@ -339,11 +327,6 @@ fun renderJson(value: JsonValue, depth: Int = 0): String =
             }
         }
     }
-
-fun addJsonRules(json: MutableMap<String, JsonValue>, key: String, additions: List<String>) {
-    val existing = jsonArray(JsonObjectValue(json), key)
-    json[key] = JsonArrayValue((existing + additions).distinct().map(::JsonStringValue))
-}
 
 fun ByteArrayOutputStream.writeVarint(number: Int) {
     require(number >= 0) { "Отрицательное protobuf-число: $number" }
@@ -442,37 +425,6 @@ fun geoipEntry(name: String, ranges: List<String>): ByteArray {
     return protobufBytes(1, entry.toByteArray())
 }
 
-fun appendGeoEntries(base: ByteArray, entries: List<Pair<String, ByteArray>>): ByteArray {
-    val existing = geoCategoryNames(base)
-    entries.forEach { (name, _) ->
-        check(name.uppercase() !in existing) { "Geo-категория $name уже есть в RoscomVPN" }
-    }
-    return ByteArrayOutputStream().apply {
-        write(base)
-        entries.forEach { (_, bytes) -> write(bytes) }
-    }.toByteArray()
-}
-
-fun pinnedRef(
-    sourceUrl: String,
-    repository: String,
-    assetPath: String,
-    fieldName: String
-): String {
-    val match =
-        Regex(
-            "^https://cdn\\.jsdelivr\\.net/gh/${Regex.escape(repository)}@([^/]+)/" +
-                "${Regex.escape(assetPath)}$"
-        ).matchEntire(sourceUrl)
-            ?: error("$fieldName должен ссылаться на pinned jsDelivr asset $repository/$assetPath")
-    val ref = match.groupValues[1]
-    require(Regex("[A-Za-z0-9][A-Za-z0-9._+-]{0,127}").matches(ref)) {
-        "Некорректный ref в $fieldName: $ref"
-    }
-    require(ref !in setOf("HEAD", "main", "master")) { "$fieldName содержит mutable ref: $ref" }
-    return ref
-}
-
 fun validateCategory(category: String): String {
     require(category.length in 1..128 && Regex("[a-z0-9][a-z0-9._-]*").matches(category)) {
         "Некорректная категория: $category"
@@ -505,6 +457,17 @@ fun validateDomainKeyword(keyword: String, context: String): String {
         "Некорректный DOMAIN-KEYWORD в $context: $keyword"
     }
     return keyword
+}
+
+fun matchesDomainRule(rule: String, hostname: String): Boolean {
+    val type = rule.substringBefore(',')
+    val value = rule.substringAfter(',', "")
+    return when (type) {
+        "DOMAIN" -> hostname == value
+        "DOMAIN-SUFFIX" -> hostname == value || hostname.endsWith(".$value")
+        "DOMAIN-KEYWORD" -> value in hostname
+        else -> false
+    }
 }
 
 fun isValidIpv4(address: String): Boolean {
@@ -553,35 +516,6 @@ fun cidrRule(cidr: String, category: String): String {
     }
 }
 
-fun dnsScopesOverlap(first: String, second: String): Boolean =
-    first == second || first.endsWith(".$second") || second.endsWith(".$first")
-
-fun alwaysRealPatternOverlapsZone(pattern: String, zone: String): Boolean {
-    val normalizedPattern = pattern.lowercase().trimEnd('.')
-    val normalizedZone = zone.lowercase().trimEnd('.')
-    val lastWildcardIndex = maxOf(normalizedPattern.lastIndexOf('*'), normalizedPattern.lastIndexOf('?'))
-    val fixedSuffix =
-        if (lastWildcardIndex >= 0) {
-            normalizedPattern.substring(lastWildcardIndex + 1).trimStart('.')
-        } else {
-            normalizedPattern
-        }
-    return fixedSuffix.isEmpty() || dnsScopesOverlap(fixedSuffix, normalizedZone)
-}
-
-fun replaceUniqueMarker(
-    template: String,
-    marker: String,
-    replacement: String,
-    templatePath: Path
-): String {
-    val markerIndex = template.indexOf(marker)
-    check(markerIndex >= 0 && markerIndex == template.lastIndexOf(marker)) {
-        "В ${templatePath.fileName} отсутствует единственный маркер $marker"
-    }
-    return template.replace(marker, replacement)
-}
-
 fun normalizedLines(text: String): List<String> =
     text
         .lineSequence()
@@ -589,12 +523,13 @@ fun normalizedLines(text: String): List<String> =
         .filter { it.isNotEmpty() && !it.startsWith("#") }
         .toList()
 
-fun existingRuleCount(path: Path): Int? =
+fun existingRules(path: Path): Set<String>? =
     if (Files.isRegularFile(path)) {
         Files
             .readString(path)
             .lineSequence()
-            .count { line -> line.isNotBlank() && !line.startsWith("#") }
+            .filter { line -> line.isNotBlank() && !line.startsWith("#") }
+            .toSet()
     } else {
         null
     }
@@ -607,25 +542,53 @@ fun validateGeneratedRuleCount(
         "Список ${path.fileName} неожиданно пуст"
     }
 
-    val previousRuleCount = existingRuleCount(path)
-
-    if (previousRuleCount != null && previousRuleCount > 0) {
+    val previousRules = existingRules(path)
+    if (previousRules != null && previousRules.isNotEmpty()) {
+        val previousRuleCount = previousRules.size
         check(rules.size.toLong() * 100 >= previousRuleCount.toLong() * 70) {
             "Список ${path.fileName} резко уменьшился: $previousRuleCount -> ${rules.size}"
+        }
+        check(rules.size.toLong() * 100 <= previousRuleCount.toLong() * 130) {
+            "Список ${path.fileName} резко вырос: $previousRuleCount -> ${rules.size}"
+        }
+        val retainedRules = rules.toSet().intersect(previousRules).size
+        check(retainedRules.toLong() * 100 >= previousRuleCount.toLong() * 80 &&
+            retainedRules.toLong() * 100 >= rules.size.toLong() * 80
+        ) {
+            "Список ${path.fileName} заменил слишком много правил: сохранено $retainedRules из $previousRuleCount"
         }
     }
 }
 
-fun regexRule(pattern: String, category: String): List<String> =
-    when (pattern) {
-        "^github-production-release-asset-[0-9a-zA-Z]{6}\\.s3\\.amazonaws\\.com\$" ->
-            listOf("DOMAIN-WILDCARD,github-production-release-asset-??????.s3.amazonaws.com")
-        "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?\$" -> {
-            check(category == "private") { "Неожиданное односегментное regexp в $category" }
-            emptyList()
-        }
-        else -> error("Неподдерживаемое regexp в $category: $pattern")
+fun previousSourceCounts(path: Path): Map<String, Int> =
+    if (Files.isRegularFile(path)) {
+        Files
+            .readAllLines(path)
+            .filter { line -> '=' in line && !line.startsWith('#') }
+            .mapNotNull { line ->
+                val count = line.substringAfter('=').toIntOrNull()
+                count?.let { line.substringBefore('=') to it }
+            }
+            .toMap()
+    } else {
+        emptyMap()
     }
+
+fun validateSourceCount(name: String, count: Int, previous: Map<String, Int>) {
+    check(count > 0) { "Источник $name неожиданно пуст" }
+    previous[name]?.takeIf { it > 0 }?.let { old ->
+        check(count.toLong() * 100 >= old.toLong() * 70) {
+            "Источник $name резко уменьшился: $old -> $count"
+        }
+        check(count.toLong() * 100 <= old.toLong() * 130) {
+            "Источник $name резко вырос: $old -> $count"
+        }
+    }
+}
+
+var taggedDomainRulesSkipped = 0
+var knownOpenaiRegexSkipped = 0
+var knownEpicRegexSkipped = 0
 
 fun geositeRules(
     category: String,
@@ -641,8 +604,23 @@ fun geositeRules(
             val line =
                 sourceLine
                     .substringBefore(" #")
-                    .substringBefore(" @")
                     .trim()
+            if (Regex("\\s@").containsMatchIn(line)) {
+                taggedDomainRulesSkipped++
+                return@flatMap emptyList<String>()
+            }
+            if (category == "openai" &&
+                line == """regexp:^chatgpt-async-webps-prod-\S+-\d+\.webpubsub\.azure\.com$"""
+            ) {
+                knownOpenaiRegexSkipped++
+                return@flatMap emptyList<String>()
+            }
+            if (category == "epicgames" &&
+                line == """regexp:^epicgames-download\d\.akamaized\.net$"""
+            ) {
+                knownEpicRegexSkipped++
+                return@flatMap emptyList<String>()
+            }
 
             when {
                 line.startsWith("include:") ->
@@ -653,10 +631,7 @@ fun geositeRules(
                     listOf("DOMAIN,${validateDomain(line.removePrefix("full:"), category)}")
                 line.startsWith("keyword:") ->
                     listOf("DOMAIN-KEYWORD,${validateDomainKeyword(line.removePrefix("keyword:"), category)}")
-                line.startsWith("regexp:") -> {
-                    val pattern = line.removePrefix("regexp:")
-                    regexRule(pattern, category)
-                }
+                line.startsWith("regexp:") -> error("Неподдерживаемое regexp в $category: $line")
                 ":" !in line -> listOf("DOMAIN-SUFFIX,${validateDomain(line, category)}")
                 else -> error("Неподдерживаемая строка в $category: $line")
             }
@@ -666,236 +641,269 @@ fun geositeRules(
     return rules
 }
 
-fun geoipRules(category: String, geoipBaseUrl: String): List<String> {
-    validateCategory(category)
-    return normalizedLines(download("$geoipBaseUrl/$category.txt")).map { cidr -> cidrRule(cidr, category) }
+val rulesDirectory = Path.of("rules")
+val manifestPath = rulesDirectory.resolve("SOURCE_MANIFEST.txt")
+val previousManifest = if (Files.isRegularFile(manifestPath)) Files.readString(manifestPath) else ""
+val previousCounts = previousSourceCounts(manifestPath)
+val samePolicyVersion = "source_profile=independent-v1" in previousManifest
+val generatedFiles = linkedMapOf<Path, String>()
+val generatedBinaryFiles = linkedMapOf<Path, ByteArray>()
+val generatedValidationFiles = linkedMapOf<Path, String>()
+
+val priorityPath = rulesDirectory.resolve("DIRECT_PRIORITY_DOMAIN.list")
+val priorityDomains =
+    normalizedLines(Files.readString(priorityPath))
+        .map { rule ->
+            require(rule.startsWith("DOMAIN-SUFFIX,")) {
+                "Приоритетное правило должно быть DOMAIN-SUFFIX: $rule"
+            }
+            val domain = validateDomain(rule.removePrefix("DOMAIN-SUFFIX,"), priorityPath.fileName.toString())
+            require('.' in domain) { "Приоритетное правило слишком широкое: $domain" }
+            domain
+        }
+        .distinct()
+check(priorityDomains.isNotEmpty()) { "DIRECT_PRIORITY_DOMAIN.list пуст" }
+
+val v2flyCommit = latestBranchCommit("v2fly/domain-list-community", "master")
+val reFilterCommit = latestBranchCommit("1andrevich/Re-filter-lists", "main")
+val ruGeoipCommit = latestBranchCommit("Loyalsoldier/geoip", "release")
+val v2flyBaseUrl =
+    "https://raw.githubusercontent.com/v2fly/domain-list-community/$v2flyCommit/data"
+val reFilterBaseUrl =
+    "https://raw.githubusercontent.com/1andrevich/Re-filter-lists/$reFilterCommit"
+val ruGeoipUrl =
+    "https://raw.githubusercontent.com/Loyalsoldier/geoip/$ruGeoipCommit/text/ru.txt"
+
+val v2flyDirectUpdatedAt = latestFileChangeDate("v2fly/domain-list-community", "data/category-ru", v2flyCommit)
+val reFilterUpdatedAt = latestFileChangeDate("1andrevich/Re-filter-lists", "domains_all.lst", reFilterCommit)
+val ruGeoipUpdatedAt = latestFileChangeDate("Loyalsoldier/geoip", "text/ru.txt", ruGeoipCommit)
+reportSourceFreshness("v2fly category-ru", v2flyDirectUpdatedAt, Duration.ofDays(45))
+reportSourceFreshness("Re-filter domains_all.lst", reFilterUpdatedAt, Duration.ofDays(14))
+reportSourceFreshness("RU GeoIP", ruGeoipUpdatedAt, Duration.ofDays(14))
+
+val proxyCategories = listOf("youtube", "telegram", "github", "instagram", "discord", "google-play", "openai")
+val proxyCategoryRules =
+    proxyCategories
+        .flatMap { category -> geositeRules(category, v2flyBaseUrl) }
+        .distinct()
+        .sorted()
+val manualProxyRules = listOf("DOMAIN-KEYWORD,chatgpt-async-webps-prod-")
+val proxyDomainRules = (proxyCategoryRules + manualProxyRules).distinct().sorted()
+val directDomainRules =
+    geositeRules("category-ru", v2flyBaseUrl)
+        .distinct()
+        .sorted()
+val directForeignCategories =
+    listOf("microsoft", "apple", "epicgames", "riot", "escapefromtarkov", "steam", "twitch", "pinterest", "faceit")
+val foreignCategoryRules =
+    directForeignCategories
+        .flatMap { category -> geositeRules(category, v2flyBaseUrl) }
+        .distinct()
+        .sorted()
+val manualForeignDirectRules = listOf("DOMAIN-KEYWORD,epicgames-download")
+val directForeignRules = (foreignCategoryRules + manualForeignDirectRules).distinct().sorted()
+check(proxyDomainRules.size >= 50) { "v2fly PROXY содержит только ${proxyDomainRules.size} правил" }
+check(knownOpenaiRegexSkipped <= 1) { "v2fly openai повторяет неподдерживаемый regexp" }
+check(knownEpicRegexSkipped <= 1) { "v2fly epicgames повторяет неподдерживаемый regexp" }
+check(directDomainRules.size >= 500) { "v2fly DIRECT содержит только ${directDomainRules.size} правил" }
+check(directForeignRules.size >= 1_000) { "v2fly зарубежный DIRECT содержит только ${directForeignRules.size} правил" }
+check(proxyDomainRules.all { it.startsWith("DOMAIN") }) { "В PROXY обнаружено не доменное правило" }
+check(directDomainRules.all { it.startsWith("DOMAIN") }) { "В DIRECT обнаружено не доменное правило" }
+check(directForeignRules.all { it.startsWith("DOMAIN") }) { "В зарубежном DIRECT обнаружено не доменное правило" }
+fun oneLabelSuffixes(rules: List<String>): Set<String> =
+    rules
+        .filter { it.startsWith("DOMAIN-SUFFIX,") }
+        .map { it.substringAfter(',') }
+        .filter { '.' !in it }
+        .toSet()
+
+check(oneLabelSuffixes(proxyDomainRules) == setOf("youtube")) {
+    "В PROXY изменились правила для целых доменных зон"
+}
+val expectedRuOneLabelSuffixes =
+    setOf(
+        "moscow", "ru", "su", "tatar", "xn--80adxhks", "xn--80asehdb",
+        "xn--80aswg", "xn--c1avg", "xn--d1acj3b", "xn--p1acf", "xn--p1ai", "yandex"
+    )
+check(oneLabelSuffixes(directDomainRules) == expectedRuOneLabelSuffixes) {
+    "В российском DIRECT изменились правила для целых доменных зон"
+}
+val expectedForeignOneLabelSuffixes =
+    setOf("apple", "azure", "bing", "hotmail", "microsoft", "office", "skype", "windows", "xbox")
+check(oneLabelSuffixes(directForeignRules) == expectedForeignOneLabelSuffixes) {
+    "В зарубежном DIRECT изменились правила для целых доменных зон"
+}
+check(proxyDomainRules.filter { it.startsWith("DOMAIN-KEYWORD,") } == manualProxyRules) {
+    "В PROXY появились непроверенные широкие keyword-правила"
+}
+check(directDomainRules.none { it.startsWith("DOMAIN-KEYWORD,") }) {
+    "В российском DIRECT появились непроверенные широкие keyword-правила"
+}
+check(directForeignRules.filter { it.startsWith("DOMAIN-KEYWORD,") } == manualForeignDirectRules) {
+    "В зарубежном DIRECT появились непроверенные широкие keyword-правила"
+}
+fun proxyRuleOverlapsPriority(rule: String, priority: String): Boolean {
+    val type = rule.substringBefore(',')
+    val value = rule.substringAfter(',')
+    return when (type) {
+        "DOMAIN" -> value == priority || value.endsWith(".$priority")
+        "DOMAIN-SUFFIX" ->
+            value == priority || value.endsWith(".$priority") || priority.endsWith(".$value")
+        "DOMAIN-KEYWORD" -> value in priority
+        else -> error("Неизвестное PROXY-правило: $rule")
+    }
 }
 
-fun alwaysRealIpPatterns(category: String, geositeBaseUrl: String): List<String> =
-    geositeRules(category, geositeBaseUrl)
-        .flatMap { rule ->
-            val separatorIndex = rule.indexOf(',')
-            check(separatorIndex > 0) { "Некорректное доменное правило в $category: $rule" }
+priorityDomains.forEach { priority ->
+    check(proxyDomainRules.none { rule -> proxyRuleOverlapsPriority(rule, priority) }) {
+        "Приоритетный DIRECT-домен $priority перекрыт v2fly PROXY"
+    }
+}
 
-            val type = rule.substring(0, separatorIndex)
-            val value = rule.substring(separatorIndex + 1)
-            when (type) {
-                "DOMAIN" -> listOf(value)
-                "DOMAIN-SUFFIX" -> listOf(value, "*.$value")
-                "DOMAIN-WILDCARD" -> listOf(value)
-                else -> error("Нельзя преобразовать $rule в always-real-ip")
+val reFilterSources =
+    listOf("domains_all.lst", "community.lst").associateWith { name ->
+        normalizedLines(download("$reFilterBaseUrl/$name"))
+            .map { domain ->
+                val validated = validateDomain(domain, name)
+                require('.' in validated) { "Re-filter содержит слишком широкое правило: $validated" }
+                validated
             }
+    }
+reFilterSources.forEach { (name, domains) ->
+    validateSourceCount(name, domains.size, previousCounts)
+    generatedValidationFiles[Path.of("build/$name")] = domains.joinToString("\n", postfix = "\n")
+}
+val reFilterDomains = reFilterSources.values.flatten().distinct()
+check(reFilterDomains.size >= 50_000) {
+    "Re-filter содержит только ${reFilterDomains.size} уникальных доменов"
+}
+val nationalSuffixes = listOf("ru", "xn--p1ai", "su", "by")
+fun isNationalDomain(domain: String): Boolean = nationalSuffixes.any { domain.endsWith(".$it") }
+
+check(reFilterDomains.none { candidate ->
+    priorityDomains.any { priority -> priority.endsWith(".$candidate") }
+}) {
+    "Re-filter содержит родительскую зону приоритетного DIRECT-правила"
+}
+val communityDomains = checkNotNull(reFilterSources["community.lst"])
+val nationalCommunityCount = communityDomains.count(::isNationalDomain)
+check(nationalCommunityCount <= 100) {
+    "Re-filter community содержит неожиданно много национальных доменов: $nationalCommunityCount"
+}
+val broadNationalCount = checkNotNull(reFilterSources["domains_all.lst"]).count(::isNationalDomain)
+val broadForeignDomains = checkNotNull(reFilterSources["domains_all.lst"]).filterNot(::isNationalDomain)
+val communityProxyRules = communityDomains.distinct().map { domain -> "DOMAIN-SUFFIX,$domain" }.sorted()
+val broadProxyRules = broadForeignDomains.distinct().map { domain -> "DOMAIN-SUFFIX,$domain" }.sorted()
+val filteredReFilterRules =
+    (communityDomains + broadForeignDomains)
+        .distinct()
+        .filterNot { domain ->
+            priorityDomains.any { priority -> domain == priority || domain.endsWith(".$priority") }
         }
+        .map { domain -> "DOMAIN-SUFFIX,$domain" }
+
+val russianRanges =
+    normalizedLines(download(ruGeoipUrl))
+        .map { range ->
+            cidrRule(range, "RU GeoIP")
+            range
+        }
+        .distinct()
+check(russianRanges.size >= 15_000) {
+    "RU GeoIP содержит только ${russianRanges.size} диапазонов"
+}
+validateSourceCount("ru_geoip_ranges", russianRanges.size, previousCounts)
+val privateRanges =
+    listOf(
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10"
+    )
+val directIpRules =
+    (privateRanges + russianRanges)
+        .map { range -> cidrRule(range, "DIRECT_IP") }
         .distinct()
         .sorted()
 
-fun categoryName(reference: String, prefix: String): String {
-    val expectedPrefix = "$prefix:"
-    require(reference.startsWith(expectedPrefix)) {
-        "Ожидалась ссылка $expectedPrefix, получено: $reference"
+fun generatedRuleFile(
+    path: Path,
+    rules: List<String>,
+    sourceCommit: String
+): String {
+    if (samePolicyVersion) {
+        validateGeneratedRuleCount(path, rules)
     }
-    return validateCategory(reference.removePrefix(expectedPrefix))
-}
-
-val routingSource =
-    System.getenv("ROUTING_SOURCE_FILE")?.let { path -> Files.readString(Path.of(path)) }
-        ?: download(routingUrl)
-val routing = StrictJsonParser(routingSource).parseDocument()
-val lastUpdated = jsonString(routing, "LastUpdated")
-check(lastUpdated.isNotEmpty() && lastUpdated.all { it.isDigit() }) {
-    "LastUpdated должен содержать Unix timestamp: $lastUpdated"
-}
-check(jsonString(routing, "GlobalProxy") == "true") {
-    "Поддерживается только GlobalProxy=true"
-}
-check(jsonString(routing, "RouteOrder") == "block-proxy-direct") {
-    "Поддерживается только RouteOrder=block-proxy-direct"
-}
-check(jsonString(routing, "DomainStrategy") == "IPIfNonMatch") {
-    "Поддерживается только DomainStrategy=IPIfNonMatch"
-}
-
-val geositeRef =
-    pinnedRef(
-        sourceUrl = jsonString(routing, "Geositeurl"),
-        repository = "hydraponique/roscomvpn-geosite",
-        assetPath = "release/geosite.dat",
-        fieldName = "Geositeurl"
-    )
-val geoipRef =
-    pinnedRef(
-        sourceUrl = jsonString(routing, "Geoipurl"),
-        repository = "hydraponique/roscomvpn-geoip",
-        assetPath = "release/geoip.dat",
-        fieldName = "Geoipurl"
-    )
-val geositeBaseUrl =
-    "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geosite@$geositeRef/data"
-val geoipBaseUrl =
-    "https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-geoip@$geoipRef/release/text"
-
-val dnsHosts = sortedMapOf<String, String>()
-jsonStringMap(routing, "DnsHosts").forEach { (host, address) ->
-    val normalizedHost = validateDomain(host, "DnsHosts").lowercase()
-    require(isValidIpv4(address)) {
-        "DnsHosts поддерживает только корректный IPv4: $host = $address"
-    }
-    check(dnsHosts.put(normalizedHost, address) == null) {
-        "В DnsHosts повторяется домен без учёта регистра: $host"
+    return buildString {
+        appendLine("# Сгенерировано из проверенного источника")
+        appendLine("# Source commit: $sourceCommit")
+        rules.forEach { rule -> appendLine(rule) }
     }
 }
-check(dnsHosts.isNotEmpty()) { "DnsHosts неожиданно пуст" }
 
-val specs =
+generatedFiles[rulesDirectory.resolve("PROXY_DOMAIN.list")] =
+    generatedRuleFile(rulesDirectory.resolve("PROXY_DOMAIN.list"), proxyDomainRules, v2flyCommit)
+generatedFiles[rulesDirectory.resolve("PROXY_REFILTER_COMMUNITY.list")] =
+    generatedRuleFile(rulesDirectory.resolve("PROXY_REFILTER_COMMUNITY.list"), communityProxyRules, reFilterCommit)
+generatedFiles[rulesDirectory.resolve("PROXY_REFILTER_DOMAIN.list")] =
+    generatedRuleFile(rulesDirectory.resolve("PROXY_REFILTER_DOMAIN.list"), broadProxyRules, reFilterCommit)
+generatedFiles[rulesDirectory.resolve("DIRECT_DOMAIN.list")] =
+    generatedRuleFile(rulesDirectory.resolve("DIRECT_DOMAIN.list"), directDomainRules, v2flyCommit)
+generatedFiles[rulesDirectory.resolve("DIRECT_FOREIGN_DOMAIN.list")] =
+    generatedRuleFile(rulesDirectory.resolve("DIRECT_FOREIGN_DOMAIN.list"), directForeignRules, v2flyCommit)
+generatedFiles[rulesDirectory.resolve("DIRECT_IP.list")] =
+    generatedRuleFile(rulesDirectory.resolve("DIRECT_IP.list"), directIpRules, ruGeoipCommit)
+
+
+val templatePath = Path.of("shadowrocket.template.conf")
+val shadowrocketConfig = Files.readString(templatePath)
+check("{{" !in shadowrocketConfig) { "В Shadowrocket-конфиге остался незаменённый маркер" }
+check("hydraponique/" !in shadowrocketConfig && "zeklop/" !in shadowrocketConfig) {
+    "Shadowrocket-конфиг всё ещё зависит от старого источника"
+}
+val configLines = normalizedLines(shadowrocketConfig)
+val expectedRuleOrder =
     listOf(
-        RouteSpec(
-            name = "BLOCK",
-            domainFileName = "BLOCK_DOMAIN.list",
-            ipFileName = "BLOCK_IP.list",
-            siteKey = "BlockSites",
-            ipKey = "BlockIp",
-            minimumRuleCount = 100
-        ),
-        RouteSpec(
-            name = "PROXY",
-            domainFileName = "PROXY_DOMAIN.list",
-            ipFileName = "PROXY_IP.list",
-            siteKey = "ProxySites",
-            ipKey = "ProxyIp",
-            minimumRuleCount = 50
-        ),
-        RouteSpec(
-            name = "DIRECT",
-            domainFileName = "DIRECT_DOMAIN.list",
-            ipFileName = "DIRECT_IP.list",
-            siteKey = "DirectSites",
-            ipKey = "DirectIp",
-            minimumRuleCount = 1_000
-        )
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/PROXY_DOMAIN.list,PROXY",
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/DIRECT_PRIORITY_DOMAIN.list,DIRECT",
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/PROXY_REFILTER_COMMUNITY.list,PROXY",
+        "DOMAIN-SUFFIX,ru,DIRECT",
+        "DOMAIN-SUFFIX,by,DIRECT",
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/PROXY_REFILTER_DOMAIN.list,PROXY",
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/DIRECT_DOMAIN.list,DIRECT",
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/DIRECT_FOREIGN_DOMAIN.list,DIRECT",
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+            "main/rules/DIRECT_IP.list,DIRECT",
+        "GEOIP,RU,DIRECT",
+        "FINAL,PROXY"
     )
-
-val outputDirectory = Path.of("rules")
-val generatedFiles = linkedMapOf<Path, String>()
-val generatedBinaryFiles = linkedMapOf<Path, ByteArray>()
-val generatedRuleCounts = linkedMapOf<String, Int>()
-val generatedIpRuleSets = mutableMapOf<String, Boolean>()
-val preservedDirectIpPath = outputDirectory.resolve("DIRECT_IP.list")
-check(Files.isRegularFile(preservedDirectIpPath)) { "Отсутствует закреплённый DIRECT_IP.list" }
-val preservedDirectIpRules = normalizedLines(Files.readString(preservedDirectIpPath))
-check(preservedDirectIpRules.size >= 30_000) { "Закреплённый DIRECT_IP.list неожиданно мал" }
-check(preservedDirectIpRules.all { it.startsWith("IP-CIDR,") || it.startsWith("IP-CIDR6,") }) {
-    "Закреплённый DIRECT_IP.list содержит не IP-CIDR правило"
+val positions = expectedRuleOrder.map { rule -> configLines.indexOf(rule) }
+check(positions.all { it >= 0 } && positions.zipWithNext().all { (first, second) -> first < second }) {
+    "Нарушен порядок DOMAIN/IP-правил Shadowrocket"
 }
-
-specs.forEach { spec ->
-    val siteCategories =
-        jsonArray(routing, spec.siteKey)
-            .map { categoryName(it, "geosite") }
-
-    val ipCategories =
-        jsonArray(routing, spec.ipKey)
-            .map { categoryName(it, "geoip") }
-
-    val domainRules =
-        siteCategories
-            .flatMap { geositeRules(it, geositeBaseUrl) }
-            .distinct()
-            .sorted()
-
-    val ipRules =
-        ipCategories
-            .flatMap { geoipRules(it, geoipBaseUrl) }
-            .distinct()
-            .sorted()
-
-    check(domainRules.all { it.startsWith("DOMAIN") }) {
-        "${spec.domainFileName} содержит не DOMAIN-правило"
-    }
-
-    check(ipRules.all { it.startsWith("IP-CIDR") }) {
-        "${spec.ipFileName} содержит не IP-CIDR правило"
-    }
-
-    check(ipRules.none { it.endsWith(",no-resolve") }) {
-        "${spec.ipFileName} не должен содержать no-resolve: это IPIfNonMatch-фаза"
-    }
-
-    val totalRuleCount = domainRules.size + ipRules.size
-
-    check(totalRuleCount >= spec.minimumRuleCount) {
-        """
-        Категория ${spec.name} содержит только $totalRuleCount правил.
-        DOMAIN: ${domainRules.size}
-        IP: ${ipRules.size}
-        Минимум: ${spec.minimumRuleCount}
-        """.trimIndent()
-    }
-
-    val domainPath = outputDirectory.resolve(spec.domainFileName)
-    val ipPath = outputDirectory.resolve(spec.ipFileName)
-
-    validateGeneratedRuleCount(domainPath, domainRules)
-
-    val domainContent =
-        buildString {
-            appendLine("# Автоматически сгенерировано из RoscomVPN")
-            appendLine("# LastUpdated: $lastUpdated")
-            appendLine("# Geosite ref: $geositeRef")
-            appendLine("# Geosite: ${siteCategories.joinToString()}")
-            appendLine("# Phase: DOMAIN")
-            domainRules.forEach { appendLine(it) }
-        }
-
-    generatedFiles[domainPath] = domainContent
-    generatedRuleCounts[spec.domainFileName] = domainRules.size
-
-    val hasIpCategories = ipCategories.isNotEmpty()
-
-    if (hasIpCategories) {
-        check(ipRules.isNotEmpty()) {
-            "${spec.ipFileName} должен содержать IP-правила, потому что ${spec.ipKey} не пуст"
-        }
-    }
-
-    generatedIpRuleSets[spec.name] = hasIpCategories
-
-    if (hasIpCategories && spec.name == "DIRECT") {
-        // Сохраняем проверенный DirectIp: upstream резко сократил список 25 октября 2026 года.
-        generatedRuleCounts[spec.ipFileName] = preservedDirectIpRules.size
-    } else if (hasIpCategories) {
-        validateGeneratedRuleCount(ipPath, ipRules)
-
-        val ipContent =
-            buildString {
-                appendLine("# Автоматически сгенерировано из RoscomVPN")
-                appendLine("# LastUpdated: $lastUpdated")
-                appendLine("# GeoIP ref: $geoipRef")
-                appendLine("# GeoIP: ${ipCategories.joinToString()}")
-                appendLine("# Phase: IP")
-                ipRules.forEach { appendLine(it) }
-            }
-
-        generatedFiles[ipPath] = ipContent
-        generatedRuleCounts[spec.ipFileName] = ipRules.size
-    } else {
-        // Если раньше файл существовал, но upstream теперь убрал IP-правила,
-        // удаляем устаревший файл.
-        Files.deleteIfExists(ipPath)
-    }
+check("dns-direct-fallback-proxy = false" in configLines) {
+    "DIRECT DNS не должен переключаться на proxy fallback"
 }
-
-val directSiteCategories = jsonArray(routing, "DirectSites").map { categoryName(it, "geosite") }
-check("whitelist" in directSiteCategories) {
-    "В DirectSites отсутствует обязательная категория geosite:whitelist"
+check("private-ip-answer = true" in configLines) {
+    "Private DNS-ответы должны приниматься"
 }
-val directIpCategories = jsonArray(routing, "DirectIp").map { categoryName(it, "geoip") }
-check("private" in directIpCategories) {
-    "В DirectIp отсутствует обязательная категория geoip:private"
-}
+generatedFiles[Path.of("shadowrocket.conf")] = shadowrocketConfig
 
 val ipCheckProxyDomains =
-    setOf(
+    listOf(
         "2ip.ru",
+        "2ip.io",
         "checkip.amazonaws.com",
         "ifconfig.me",
         "ip.sb",
@@ -904,336 +912,58 @@ val ipCheckProxyDomains =
         "iplocate.io",
         "showip.net"
     )
-val protectedAlwaysRealIpZones = ipCheckProxyDomains + setOf("yandexcloud.net")
-dnsHosts.keys.forEach { host ->
-    check(protectedAlwaysRealIpZones.none { zone -> alwaysRealPatternOverlapsZone(host, zone) }) {
-        "DnsHosts-домен $host конфликтует с защищённой зоной always-real-ip"
-    }
-}
-val alwaysRealIpCandidates =
-    (alwaysRealIpPatterns("whitelist", geositeBaseUrl) + dnsHosts.keys)
-        .distinct()
-        .sorted()
-val shadowrocketAlwaysRealIpPatterns =
-    alwaysRealIpCandidates.filterNot { pattern ->
-        protectedAlwaysRealIpZones.any { zone -> alwaysRealPatternOverlapsZone(pattern, zone) }
-    }
-check(shadowrocketAlwaysRealIpPatterns.isNotEmpty()) { "Список always-real-ip получился пустым" }
-check("*.netmonet.co" in shadowrocketAlwaysRealIpPatterns) {
-    "В geosite:whitelist отсутствует ожидаемый домен netmonet.co"
-}
-protectedAlwaysRealIpZones.forEach { zone ->
-    check(shadowrocketAlwaysRealIpPatterns.none { pattern -> alwaysRealPatternOverlapsZone(pattern, zone) }) {
-        "$zone не должен отключать Fake-IP через always-real-ip"
-    }
-}
-dnsHosts.keys.forEach { host ->
-    check(host in shadowrocketAlwaysRealIpPatterns) {
-        "DnsHosts-домен $host отсутствует в always-real-ip"
-    }
-}
-
-val additionalRejectUrl =
-    "https://raw.githubusercontent.com/zeklop/shadowrocket-configs/main/REJECT.list"
-
-val additionalRejectRules =
-    normalizedLines(
-        System.getenv("REJECT_SOURCE_FILE")?.let { path -> Files.readString(Path.of(path)) }
-            ?: download(additionalRejectUrl)
-    )
-
-val allowedDomainRulePrefixes =
-    listOf(
-        "DOMAIN,",
-        "DOMAIN-SUFFIX,",
-        "DOMAIN-KEYWORD,"
-    )
-
-check(
-    additionalRejectRules.all { rule ->
-        allowedDomainRulePrefixes.any { prefix -> rule.startsWith(prefix) }
-    }
-) {
-    "В REJECT.list появилось не DOMAIN-правило. " +
-            "Такой список нельзя размещать в DOMAIN-фазе IPIfNonMatch."
-}
-
-val templatePath = Path.of("shadowrocket.template.conf")
-val alwaysRealIpMarker = "{{ROSCOMVPN_WHITELIST_ALWAYS_REAL_IP}}"
-val dnsHostsSectionMarker = "{{ROSCOMVPN_DNS_HOSTS_SECTION}}"
-val blockIpRuleSetMarker = "{{ROSCOMVPN_BLOCK_IP_RULESET}}"
-val proxyIpRuleSetMarker = "{{ROSCOMVPN_PROXY_IP_RULESET}}"
-val configTemplate = Files.readString(templatePath)
-val templateRuleLines = configTemplate.lineSequence().map { it.trim() }.toSet()
-ipCheckProxyDomains.forEach { domain ->
-    check("DOMAIN-SUFFIX,$domain,PROXY" in templateRuleLines) {
-        "В ${templatePath.fileName} нет PROXY-правила для $domain"
-    }
-}
-
-val dnsHostsSection =
-    buildString {
-        appendLine("[Host]")
-        dnsHosts.forEach { (host, address) -> appendLine("$host = $address") }
-    }.trimEnd()
-
-val blockIpRuleSet =
-    if (generatedIpRuleSets["BLOCK"] == true) {
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/BLOCK_IP.list,REJECT"
-    } else {
-        ""
-    }
-
-val proxyIpRuleSet =
-    if (generatedIpRuleSets["PROXY"] == true) {
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/PROXY_IP.list,PROXY"
-    } else {
-        ""
-    }
-
-val configWithAlwaysRealIp =
-    replaceUniqueMarker(
-        template = configTemplate,
-        marker = alwaysRealIpMarker,
-        replacement = shadowrocketAlwaysRealIpPatterns.joinToString(", "),
-        templatePath = templatePath
-    )
-
-val configWithDnsHosts =
-    replaceUniqueMarker(
-        template = configWithAlwaysRealIp,
-        marker = dnsHostsSectionMarker,
-        replacement = dnsHostsSection,
-        templatePath = templatePath
-    )
-
-val configWithBlockIp =
-    replaceUniqueMarker(
-        template = configWithDnsHosts,
-        marker = blockIpRuleSetMarker,
-        replacement = blockIpRuleSet,
-        templatePath = templatePath
-    )
-
-val shadowrocketConfig =
-    replaceUniqueMarker(
-        template = configWithBlockIp,
-        marker = proxyIpRuleSetMarker,
-        replacement = proxyIpRuleSet,
-        templatePath = templatePath
-    )
-val generatedConfigRuleLines =
-    shadowrocketConfig
-        .lineSequence()
-        .map { it.trim() }
-        .toList()
-val generatedConfigLines = generatedConfigRuleLines.toSet()
-check("{{ROSCOMVPN_" !in shadowrocketConfig) {
-    "В shadowrocket.conf остался незаменённый marker"
-}
-check("dns-direct-fallback-proxy = false" in generatedConfigLines) {
-    "DIRECT DNS не должен переключаться на proxy fallback"
-}
-check("private-ip-answer = true" in generatedConfigLines) {
-    "Shadowrocket должен принимать private DNS-ответы для IPIfNonMatch"
-}
-
-val blockDomainIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/BLOCK_DOMAIN.list,REJECT"
-    )
-
-val proxyDomainIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/PROXY_DOMAIN.list,PROXY"
-    )
-
-val reFilterDomainIndex =
-    generatedConfigRuleLines.indexOf(
-        "DOMAIN-SET,https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/domains_all.lst,PROXY"
-    )
-
-val directDomainIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/DIRECT_DOMAIN.list,DIRECT"
-    )
-
-val nationalZoneFallbackIndex =
-    generatedConfigRuleLines.indexOf("DOMAIN-SUFFIX,by,DIRECT")
-
-val blockIpIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/BLOCK_IP.list,REJECT"
-    )
-
-val proxyIpIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/PROXY_IP.list,PROXY"
-    )
-
-val reFilterIpIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/ipsum.lst,PROXY"
-    )
-
-val directIpIndex =
-    generatedConfigRuleLines.indexOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/rules/DIRECT_IP.list,DIRECT"
-    )
-
-val geoIpFallbackIndex =
-    generatedConfigRuleLines.indexOf("GEOIP,RU,DIRECT")
-
-val finalProxyIndex =
-    generatedConfigRuleLines.indexOf("FINAL,PROXY")
-
-check(
-    listOf(
-        blockDomainIndex,
-        proxyDomainIndex,
-        reFilterDomainIndex,
-        directDomainIndex,
-        nationalZoneFallbackIndex,
-        reFilterIpIndex,
-        directIpIndex,
-        geoIpFallbackIndex,
-        finalProxyIndex
-    ).all { it >= 0 }
-) {
-    "В shadowrocket.conf отсутствуют обязательные IPIfNonMatch-правила"
-}
-
-check(
-    (generatedIpRuleSets["BLOCK"] == true) == (blockIpIndex >= 0)
-) {
-    "BLOCK_IP RULE-SET не соответствует текущему BlockIp"
-}
-
-check(
-    (generatedIpRuleSets["PROXY"] == true) == (proxyIpIndex >= 0)
-) {
-    "PROXY_IP RULE-SET не соответствует текущему ProxyIp"
-}
-
-val domainPhaseIndices =
-    listOf(
-        blockDomainIndex,
-        proxyDomainIndex,
-        reFilterDomainIndex,
-        directDomainIndex,
-        nationalZoneFallbackIndex
-    )
-
-check(
-    domainPhaseIndices.zipWithNext().all { (first, second) ->
-        first < second
-    }
-) {
-    "Нарушен порядок DOMAIN-фазы"
-}
-
-val ipPhaseIndices =
-    buildList {
-        if (blockIpIndex >= 0) {
-            add(blockIpIndex)
-        }
-
-        if (proxyIpIndex >= 0) {
-            add(proxyIpIndex)
-        }
-
-        add(reFilterIpIndex)
-        add(directIpIndex)
-        add(geoIpFallbackIndex)
-        add(finalProxyIndex)
-    }
-
-check(
-    nationalZoneFallbackIndex < ipPhaseIndices.first()
-) {
-    "IP-фаза должна начинаться только после всех DOMAIN-правил"
-}
-
-check(
-    ipPhaseIndices.zipWithNext().all { (first, second) ->
-        first < second
-    }
-) {
-    "Нарушен порядок IPIfNonMatch/fallback-фазы"
-}
-
-generatedFiles[Path.of("shadowrocket.conf")] = shadowrocketConfig
-
-val reFilterBaseUrl = "https://cdn.jsdelivr.net/gh/1andrevich/Re-filter-lists@main"
-val reFilterDomainRules =
-    listOf("domains_all.lst", "community.lst")
-        .flatMap { fileName ->
-            normalizedLines(download("$reFilterBaseUrl/$fileName"))
-                .map { domain -> "DOMAIN-SUFFIX,${validateDomain(domain, fileName)}" }
-        }
-        .distinct()
-val reFilterIpRanges =
-    listOf("ipsum.lst", "community_ips.lst", "discord_ips.lst")
-        .flatMap { fileName -> normalizedLines(download("$reFilterBaseUrl/$fileName")) }
-        .distinct()
-val russianIpRanges =
-    normalizedLines(download("https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/text/ru.txt"))
-        .distinct()
-check(reFilterDomainRules.size >= 50_000) { "Re-filter неожиданно потерял домены" }
-check(reFilterIpRanges.size >= 20_000) { "Re-filter неожиданно потерял IP-диапазоны" }
-check(russianIpRanges.size >= 15_000) { "GeoIP RU неожиданно потерял IP-диапазоны" }
-
+val happProxyRules = (proxyDomainRules + filteredReFilterRules).distinct()
+val happDirectRules =
+    (directDomainRules + directForeignRules + priorityDomains.map { domain -> "DOMAIN-SUFFIX,$domain" }).distinct()
 val happGeosite =
-    appendGeoEntries(
-        downloadBytes(jsonString(routing, "Geositeurl")),
-        listOf(
-            "SHADOWROCKET-REJECT" to geositeEntry("SHADOWROCKET-REJECT", additionalRejectRules),
-            "SHADOWROCKET-PROXY" to geositeEntry("SHADOWROCKET-PROXY", reFilterDomainRules)
-        )
-    )
+    geositeEntry("ROUTING-PROXY", happProxyRules) +
+        geositeEntry("ROUTING-DIRECT", happDirectRules)
 val happGeoip =
-    appendGeoEntries(
-        downloadBytes(jsonString(routing, "Geoipurl")),
-        listOf(
-            "SHADOWROCKET-PROXY" to geoipEntry("SHADOWROCKET-PROXY", reFilterIpRanges),
-            "SHADOWROCKET-DIRECT" to geoipEntry(
-                "SHADOWROCKET-DIRECT",
-                preservedDirectIpRules.map { rule -> rule.substringAfter(',') }
-            ),
-            "RU" to geoipEntry("RU", russianIpRanges)
-        )
-    )
-check(geoCategoryNames(happGeosite).containsAll(setOf("SHADOWROCKET-REJECT", "SHADOWROCKET-PROXY"))) {
-    "В Happ geosite.dat отсутствуют дополнительные категории"
+    geoipEntry("PRIVATE", privateRanges) +
+        geoipEntry("RU", russianRanges)
+check(geoCategoryNames(happGeosite) == setOf("ROUTING-PROXY", "ROUTING-DIRECT")) {
+    "В Happ geosite.dat отсутствует нужная категория"
 }
-check(geoCategoryNames(happGeoip).containsAll(setOf("SHADOWROCKET-PROXY", "SHADOWROCKET-DIRECT", "RU"))) {
-    "В Happ geoip.dat отсутствуют дополнительные категории"
+check(geoCategoryNames(happGeoip) == setOf("PRIVATE", "RU")) {
+    "В Happ geoip.dat отсутствует нужная категория"
 }
 
-val happFields = routing.values.toMutableMap()
-happFields["Name"] = JsonStringValue("Shadowrocket-like Happ")
-happFields["Geositeurl"] =
-    JsonStringValue(
-        "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat"
-    )
-happFields["Geoipurl"] =
-    JsonStringValue(
-        "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat"
-    )
-addJsonRules(happFields, "BlockSites", listOf("geosite:shadowrocket-reject"))
-addJsonRules(
-    happFields,
-    "ProxySites",
-    listOf("geosite:shadowrocket-proxy") + ipCheckProxyDomains.sorted().map { domain -> "domain:$domain" }
-)
-addJsonRules(happFields, "ProxyIp", listOf("geoip:shadowrocket-proxy"))
-addJsonRules(happFields, "DirectSites", listOf("domain:ru", "domain:xn--p1ai", "domain:su", "domain:by"))
-check(jsonArray(routing, "DirectIp") == listOf("geoip:private", "geoip:direct")) {
-    "Состав DirectIp upstream изменился; закреплённый Happ-профиль требует проверки"
-}
-happFields["DirectIp"] =
-    JsonArrayValue(
-        listOf("geoip:private", "geoip:shadowrocket-direct", "geoip:ru").map(::JsonStringValue)
+fun jsonStrings(values: List<String>): JsonArrayValue =
+    JsonArrayValue(values.map(::JsonStringValue))
+
+val happFields =
+    linkedMapOf<String, JsonValue>(
+        "Name" to JsonStringValue("Independent RU Routing"),
+        "GlobalProxy" to JsonStringValue("true"),
+        "UseChunkFiles" to JsonStringValue("true"),
+        "RemoteDns" to JsonStringValue("8.8.8.8"),
+        "DomesticDns" to JsonStringValue("77.88.8.8"),
+        "RemoteDNSType" to JsonStringValue("DoH"),
+        "RemoteDNSDomain" to JsonStringValue("https://8.8.8.8/dns-query"),
+        "RemoteDNSIP" to JsonStringValue("8.8.8.8"),
+        "DomesticDNSType" to JsonStringValue("DoH"),
+        "DomesticDNSDomain" to JsonStringValue("https://77.88.8.8/dns-query"),
+        "DomesticDNSIP" to JsonStringValue("77.88.8.8"),
+        "Geoipurl" to JsonStringValue(
+            "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat"
+        ),
+        "Geositeurl" to JsonStringValue(
+            "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat"
+        ),
+        "DnsHosts" to JsonObjectValue(emptyMap()),
+        "RouteOrder" to JsonStringValue("block-proxy-direct"),
+        "DirectSites" to jsonStrings(
+            listOf("geosite:routing-direct", "domain:ru", "domain:xn--p1ai", "domain:su", "domain:by")
+        ),
+        "DirectIp" to jsonStrings(listOf("geoip:private", "geoip:ru")),
+        "ProxySites" to jsonStrings(
+            listOf("geosite:routing-proxy") + ipCheckProxyDomains.map { domain -> "domain:$domain" }
+        ),
+        "ProxyIp" to jsonStrings(emptyList()),
+        "BlockSites" to jsonStrings(emptyList()),
+        "BlockIp" to jsonStrings(emptyList()),
+        "DomainStrategy" to JsonStringValue("IPIfNonMatch"),
+        "FakeDNS" to JsonStringValue("false")
     )
 val previousHappPath = Path.of("happ/happ-routing.json")
 val previousHapp =
@@ -1245,17 +975,16 @@ val previousHapp =
 val previousHappTimestamp =
     (previousHapp?.values?.get("LastUpdated") as? JsonStringValue)?.value?.toLongOrNull() ?: 0L
 val happDataChanged =
-    previousHapp?.values?.filterKeys { key -> key != "LastUpdated" } !=
-        happFields.filterKeys { key -> key != "LastUpdated" } ||
+    previousHapp?.values?.filterKeys { key -> key != "LastUpdated" } != happFields ||
         !Files.isRegularFile(Path.of("happ/geosite.dat")) ||
         !Files.readAllBytes(Path.of("happ/geosite.dat")).contentEquals(happGeosite) ||
         !Files.isRegularFile(Path.of("happ/geoip.dat")) ||
         !Files.readAllBytes(Path.of("happ/geoip.dat")).contentEquals(happGeoip)
 val happTimestamp =
     if (happDataChanged) {
-        maxOf(lastUpdated.toLong(), previousHappTimestamp + 1, System.currentTimeMillis() / 1_000)
+        maxOf(previousHappTimestamp + 1, Instant.now().epochSecond)
     } else {
-        maxOf(lastUpdated.toLong(), previousHappTimestamp)
+        previousHappTimestamp
     }
 happFields["LastUpdated"] = JsonStringValue(happTimestamp.toString())
 val happJson = "${renderJson(JsonObjectValue(happFields))}\n"
@@ -1266,23 +995,49 @@ generatedFiles[Path.of("happ/happ-routing-link.txt")] = happLink
 generatedBinaryFiles[Path.of("happ/geosite.dat")] = happGeosite
 generatedBinaryFiles[Path.of("happ/geoip.dat")] = happGeoip
 
-val legacyRuleFiles =
-    listOf(
-        "BLOCK.list",
-        "PROXY.list",
-        "DIRECT.list"
-    )
+generatedFiles[manifestPath] =
+    buildString {
+        appendLine("# Снимки независимых источников маршрутизации")
+        appendLine("source_profile=independent-v1")
+        appendLine("v2fly_commit=$v2flyCommit")
+        appendLine("v2fly_category_ru_updated_at=$v2flyDirectUpdatedAt")
+        appendLine("v2fly_proxy_categories=${proxyCategories.joinToString(",")}")
+        appendLine("v2fly_proxy_rules=${proxyCategoryRules.size}")
+        appendLine("manual_proxy_rules=${manualProxyRules.size}")
+        appendLine("proxy_rules_total=${proxyDomainRules.size}")
+        appendLine("v2fly_direct_rules=${directDomainRules.size}")
+        appendLine("v2fly_foreign_direct_categories=${directForeignCategories.joinToString(",")}")
+        appendLine("v2fly_foreign_direct_rules=${foreignCategoryRules.size}")
+        appendLine("manual_foreign_direct_rules=${manualForeignDirectRules.size}")
+        appendLine("foreign_direct_rules_total=${directForeignRules.size}")
+        appendLine("v2fly_tagged_rules_skipped=$taggedDomainRulesSkipped")
+        appendLine("v2fly_openai_regex_skipped=$knownOpenaiRegexSkipped")
+        appendLine("v2fly_epicgames_regex_skipped=$knownEpicRegexSkipped")
+        appendLine("refilter_commit=$reFilterCommit")
+        appendLine("refilter_domains_updated_at=$reFilterUpdatedAt")
+        appendLine("refilter_broad_national_excluded=$broadNationalCount")
+        appendLine("refilter_community_national_kept=$nationalCommunityCount")
+        appendLine("refilter_broad_foreign_rules=${broadProxyRules.size}")
+        appendLine("refilter_community_rules=${communityProxyRules.size}")
+        appendLine("refilter_proxy_rules=${filteredReFilterRules.size}")
+        appendLine("ru_geoip_commit=$ruGeoipCommit")
+        appendLine("ru_geoip_updated_at=$ruGeoipUpdatedAt")
+        appendLine("ru_geoip_ranges=${russianRanges.size}")
+        reFilterSources.forEach { (name, domains) -> appendLine("$name=${domains.size}") }
+    }
 
-legacyRuleFiles.forEach { fileName ->
-    Files.deleteIfExists(outputDirectory.resolve(fileName))
-}
-
-Files.createDirectories(outputDirectory)
+Files.createDirectories(rulesDirectory)
 Files.createDirectories(Path.of("happ"))
+Files.createDirectories(Path.of("build"))
 generatedFiles.forEach { (path, content) -> Files.writeString(path, content) }
 generatedBinaryFiles.forEach { (path, content) -> Files.write(path, content) }
-generatedRuleCounts.forEach { (fileName, count) -> println("$fileName: $count правил") }
-println("shadowrocket.conf: ${shadowrocketAlwaysRealIpPatterns.size} шаблонов always-real-ip")
-println("shadowrocket.conf: ${dnsHosts.size} записей DnsHosts")
-println("happ: ${reFilterDomainRules.size} Re-filter доменов")
-println("happ: ${reFilterIpRanges.size} Re-filter IP-диапазонов")
+generatedValidationFiles.forEach { (path, content) -> Files.writeString(path, content) }
+listOf("BLOCK_DOMAIN.list", "BLOCK_IP.list", "PROXY_IP.list").forEach { name ->
+    Files.deleteIfExists(rulesDirectory.resolve(name))
+}
+println("PROXY_DOMAIN.list: ${proxyDomainRules.size} правил")
+println("DIRECT_DOMAIN.list: ${directDomainRules.size} правил")
+println("DIRECT_FOREIGN_DOMAIN.list: ${directForeignRules.size} правил")
+println("DIRECT_IP.list: ${directIpRules.size} правил")
+println("Re-filter: ${reFilterDomains.size} доменов")
+println("v2fly: пропущено $taggedDomainRulesSkipped строк с атрибутами")

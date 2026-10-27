@@ -1,0 +1,7 @@
+# Ручные приоритетные DIRECT-правила для российских сервисов.
+# Проверять на устройстве при расширении списка.
+DOMAIN-SUFFIX,gosuslugi.ru
+DOMAIN-SUFFIX,nalog.ru
+DOMAIN-SUFFIX,ozon.ru
+DOMAIN-SUFFIX,wildberries.ru
+DOMAIN-SUFFIX,netmonet.co

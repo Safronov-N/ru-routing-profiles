@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/update-rules.yml
       - scripts/generate.main.kts
+      - scripts/verify-routing.main.kts
       - shadowrocket.template.conf
       - shadowrocket.conf
       - rules/**
@@ -13,6 +14,7 @@ on:
     paths:
       - .github/workflows/update-rules.yml
       - scripts/generate.main.kts
+      - scripts/verify-routing.main.kts
       - shadowrocket.template.conf
       - shadowrocket.conf
       - rules/**
@@ -48,6 +50,11 @@ jobs:
 
       - name: Сгенерировать и проверить правила
         run: kotlinc -script scripts/generate.main.kts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Проверить маршруты
+        run: kotlinc -script scripts/verify-routing.main.kts
 
       - name: Проверить служебные файлы
         run: |
@@ -57,13 +64,12 @@ jobs:
           test -s happ/geosite.dat
           test -s happ/geoip.dat
           test -s examples/macos-resolver/mdb.yandexcloud.net.example
-          grep -Fxq '[Host]' shadowrocket.conf
           grep -Fxq 'nameserver VPC_DNS_IP_1' examples/macos-resolver/mdb.yandexcloud.net.example
-          ! grep -Fq '{{ROSCOMVPN_' shadowrocket.conf
+          ! grep -Eq 'hydraponique|zeklop|\{\{' shadowrocket.conf
           ! grep '^always-real-ip = ' shadowrocket.conf | grep -Fq 'yandexcloud.net'
 
       - name: Проверить актуальность generated-файлов
-        run: git diff --exit-code -- rules shadowrocket.conf happ
+        run: test -z "$(git status --porcelain -- rules shadowrocket.conf happ)"
 
   update:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -83,6 +89,11 @@ jobs:
 
       - name: Сгенерировать и проверить правила
         run: kotlinc -script scripts/generate.main.kts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Проверить маршруты
+        run: kotlinc -script scripts/verify-routing.main.kts
 
       - name: Опубликовать изменения
         run: |

@@ -1,281 +1,89 @@
-# Shadowrocket RoscomVPN Routing
+# Independent RU Routing
 
-Автообновляемая адаптация профиля RoscomVPN для Shadowrocket.
+Автообновляемая маршрутизация для Shadowrocket и Happ. Профиль использует собственную политику и три независимых входа: [v2fly domain-list-community](https://github.com/v2fly/domain-list-community) для категорий сервисов, [Re-filter](https://github.com/1andrevich/Re-filter-lists) для дополнительных доменов, требующих прокси в России, и [Loyalsoldier GeoIP](https://github.com/Loyalsoldier/geoip) для российских IP-диапазонов. RoscomVPN не участвует в сборке. Старое имя GitHub-репозитория сохранено в адресах опубликованных файлов.
 
-Репозиторий преобразует категории из `HAPP/DEFAULT.JSON` в нативные списки правил Shadowrocket и публикует готовый конфиг без VPN-серверов, ключей и учётных данных.
+Генератор не содержит VPN-серверов, ключей и учётных данных. `PROXY` использует выбранное в приложении подключение.
 
-Основная цель — максимально сохранить логику RoscomVPN, включая `DomainStrategy=IPIfNonMatch`, при использовании Shadowrocket.
+Форк RoscomVPN не решает задачу актуальности сам по себе: он сохраняет старую цепочку входных данных и потребует поддерживать её вручную. Здесь источники, правила приоритета, проверки и сборка принадлежат этому репозиторию. v2fly задаёт категории сервисов, Re-filter даёт кандидатов на проксирование, Loyalsoldier обновляет российские IP. Полный сырой Antifilter не подключён: он значительно шире нужного набора и не является проверкой доступности у конкретного провайдера.
 
-## Установка
+## Shadowrocket
 
-Импортируйте в Shadowrocket:
+Импортируйте конфигурацию:
 
 ```text
 https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/shadowrocket.conf
 ```
 
-Выберите своё VPN-подключение, примените конфиг и оставьте режим маршрутизации **Config**.
+Выберите своё VPN-подключение и режим маршрутизации **Config**. Включите фоновое обновление конфигурации в Shadowrocket и Background App Refresh в iOS. Фактическое время применения новых правил зависит от обновления конфигурации и списков самим приложением.
 
-Для автоматического обновления включите фоновое обновление конфигурации в Shadowrocket и Background App Refresh в настройках iOS.
+## Happ
 
-Конфиг использует текущий выбранный VPN-сервер: действие `PROXY` не содержит адресов серверов, ключей или других секретов.
+[`happ/happ-routing.json`](happ/happ-routing.json) и [`happ/happ-routing-link.txt`](happ/happ-routing-link.txt) содержат профиль Happ. Генератор создаёт `happ/geosite.dat` с категориями `ROUTING-PROXY` и `ROUTING-DIRECT`, а также `happ/geoip.dat` с категориями `RU` и `PRIVATE`.
 
-## Профиль для Happ
+Профиль импортируется через ссылку из `happ/happ-routing-link.txt` и применяется после переподключения. Для обновления уже импортированного профиля может потребоваться повторный импорт или получение новой ссылки вместе с обновляемой подпиской; сам выпуск файлов каждые шесть часов не подтверждает, что клиент их уже применил. Для JSON-подписки Happ профиль должен предоставляться подпиской. Фрагментация настраивается отдельно от маршрутизации.
 
-[`happ/happ-routing.json`](happ/happ-routing.json) и [`happ/happ-routing-link.txt`](happ/happ-routing-link.txt) содержат профиль Happ. Его `geosite.dat` и `geoip.dat` опубликованы в [`happ/`](happ/) ветки `main`; профиль ссылается на их URL в этом репозитории.
+## Политика маршрутизации
 
-После публикации откройте ссылку из `happ/happ-routing-link.txt` на устройстве с Happ, выберите профиль **Shadowrocket-like Happ** для нужной подписки и переподключите VPN. Фрагментацию включите отдельно в настройках подключения Happ: профиль маршрутизации её не настраивает.
+Доменное правило имеет приоритет перед IP-правилом. Если доменное имя не совпало ни с одним правилом, клиент проверяет IP; конечный маршрут — `PROXY`. Happ использует `DomainStrategy=IPIfNonMatch` и `RouteOrder=block-proxy-direct`.
 
-Профиль использует категории RoscomVPN и переносит дополнительные правила Shadowrocket: рекламный `REJECT.list` → `geosite:shadowrocket-reject`, домены Re-filter → `geosite:shadowrocket-proxy`, IP-списки Re-filter → `geoip:shadowrocket-proxy`, закреплённый `DIRECT_IP.list` → `geoip:shadowrocket-direct`, российские IP → `geoip:ru`, национальные зоны `.ru/.рф/.su/.by` → `DIRECT`, сервисы проверки внешнего IP → `PROXY`. Гео-файлы объединяются генератором каждые 6 часов вместе с Shadowrocket-конфигом.
+### Домены
 
-Это перенос **маршрутизации**. DNS/fallback и `always-real-ip` Shadowrocket не имеют прямого соответствия в Happ JSON-профиле; профиль оставляет DNS-настройки RoscomVPN. Российская GeoIP-база взята из проекта Loyalsoldier, поэтому отдельные IP-решения могут отличаться от GeoLite2 Shadowrocket. GitHub обновляет профиль и geo-файлы при изменении источников, но для обновления уже импортированного профиля в Happ может понадобиться повторно открыть актуальную ссылку из `happ/happ-routing-link.txt`. Happ загружает geo-файлы не чаще одного раза в неделю; новые правила применяются после переподключения.
+1. Выбранные категории v2fly `youtube`, `telegram`, `github`, `instagram`, `discord`, `google-play`, `openai` → `PROXY`.
+2. Ручной [`DIRECT_PRIORITY_DOMAIN.list`](rules/DIRECT_PRIORITY_DOMAIN.list) для ограниченного набора российских государственных, платёжных и торговых сервисов → `DIRECT`.
+3. Небольшой список сообщества `community.lst` Re-filter → `PROXY`.
+4. Национальные зоны `.ru`, `.рф`, `.su`, `.by` → `DIRECT`.
+5. Расширенный `domains_all.lst` Re-filter для остальных зон → `PROXY`.
+6. Категория v2fly `category-ru` → `DIRECT`.
+7. Независимые категории v2fly для Steam, Apple, Microsoft, Epic Games, Riot, Escape from Tarkov, Twitch, Pinterest и Faceit → `DIRECT`.
+8. Всё остальное проверяется по IP, затем попадает в `FINAL,PROXY`.
 
-Happ применяет смену профиля после переподключения. Если подписка содержит готовую Xray JSON-конфигурацию, Happ не разрешает вручную добавлять к ней профиль маршрутизации; его должен предоставить источник подписки.
+Сервисы проверки внешнего адреса, перечисленные в конфигурации, принудительно идут через `PROXY`. Широкий список Re-filter содержит десятки тысяч национальных доменов, в том числе возможные ложные срабатывания; поэтому он не переопределяет национальный `DIRECT`. Явные категории сервисов и список сообщества имеют более высокий приоритет. Для Happ национальные записи широкого списка исключаются из `ROUTING-PROXY`, чтобы порядок совпадал с Shadowrocket. Ручной приоритетный список размещён перед Re-filter для сервисов, которым нужен российский адрес; его расширение требует проверки на устройстве.
 
-## Маршрутизация
+Зарубежные исключения размещены после Re-filter. Поэтому Steam идёт напрямую, а отдельно перечисленные заблокированные адреса Microsoft и Twitch остаются через прокси. У v2fly есть две динамические регулярки, которые нельзя точно выразить общими правилами Shadowrocket и Happ: для Azure WebPubSub OpenAI добавлено узкое PROXY-правило по префиксу имени, для CDN Epic Games — DIRECT-правило по префиксу. Пропуски исходных регулярных выражений записаны в манифесте.
 
-Правила разделены на две основные фазы:
+### IP
 
-1. DOMAIN — маршрутизация по доменному имени.
-2. IP — fallback по реальному IP, если ни одно доменное правило не совпало.
+Локальные и private диапазоны идут напрямую; ранние правила с `no-resolve` не вызывают преждевременный DNS-запрос. Для остального трафика `DIRECT_IP.list` строится из `Loyalsoldier/geoip` `ru.txt`, затем `GEOIP,RU` Shadowrocket служит дополнительным fallback. Остальные IP идут через `FINAL,PROXY`.
 
-Это повторяет основную логику `DomainStrategy=IPIfNonMatch`.
+Широкие IP-списки Re-filter, включая DNS-производные сети и общие CDN-диапазоны, не подключаются. Они могут направить через прокси посторонний сервис. В Happ категория `PRIVATE` собирается из фиксированных private диапазонов, а `RU` — из того же проверенного `ru.txt`.
 
-### DOMAIN phase
+## Автоматическое обновление
 
-Порядок:
+[`update-rules.yml`](.github/workflows/update-rules.yml) запускает генерацию каждые шесть часов и при изменениях кода. Генератор:
 
-1. `BlockSites` RoscomVPN → `REJECT`
-2. дополнительный рекламный `REJECT.list` → `REJECT`
-3. сервисы проверки внешнего IP → `PROXY`
-4. `ProxySites` RoscomVPN → `PROXY`
-5. доменные списки Re-filter → `PROXY`
-6. `DirectSites` RoscomVPN → `DIRECT`
-7. национальные зоны `.ru`, `.рф`, `.su`, `.by` → `DIRECT`
+1. Фиксирует SHA входных GitHub-репозиториев и загружает каждый набор из одного снимка.
+2. Проверяет формат доменов и CIDR, ожидаемые категории, объём и сохранность состава правил относительно предыдущей публикации.
+3. Пропускает записи v2fly с атрибутами `@...` при построении общих категорий, чтобы рекламные и технические подмножества не превращались в обычное правило сервиса.
+4. Создаёт собственные ruleset-файлы, профиль Happ и geo-файлы; записывает происхождение и объёмы в `rules/SOURCE_MANIFEST.txt`.
+5. Проверяет порядок правил и контрольные маршруты, после чего публикует весь результат.
 
-Если домен совпал на этом этапе, дальнейшая IP-проверка для него не требуется.
+Если источник недоступен или проверка не прошла, выпуск не публикуется; последняя опубликованная версия остаётся доступной. Отдельно сообщается возраст входных списков. Неизменная дата коммита сама по себе не доказывает, что данные неверны, поэтому только по возрасту сборка не останавливается.
 
-Например, если `rutube.ru` находится в `DirectSites`, он получает `DIRECT`, даже если один из его IP-адресов присутствует в стороннем IP-списке блокировок.
+Расписание GitHub Actions работает по принципу best effort: [GitHub допускает задержку или пропуск запуска и отключает расписание публичного репозитория после 60 дней без активности](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows). Поэтому состояние последнего успешного запуска нужно отслеживать отдельно; `workflow_dispatch` позволяет запустить обновление вручную.
 
-### IP phase
+Re-filter поставляет кандидатов на проксирование, но его списки и измерения не являются доказательством доступности каждого домена у конкретного провайдера. Контрольные маршруты защищают от известных ошибок конфигурации; проверка приложений на устройстве и сети пользователя остаётся необходимой.
 
-Если ни одно DOMAIN-правило не совпало, Shadowrocket разрешает hostname в реальный IP и продолжает проверку по IP-правилам.
+## DNS и локальные сети
 
-Порядок:
+Shadowrocket использует `tls://common.dot.dns.yandex.net`, fallback `https://dns.google/dns-query#proxy`, `https://cloudflare-dns.com/dns-query#proxy` и `system`. `dns-direct-fallback-proxy = false` не переводит DIRECT DNS на proxy fallback; `private-ip-answer = true` допускает private DNS-ответы для локальных сетей. Массовый `always-real-ip` из прежнего профиля не используется.
 
-1. `BlockIp` RoscomVPN → `REJECT`, если категория присутствует
-2. `ProxyIp` RoscomVPN → `PROXY`, если категория присутствует
-3. IP-списки Re-filter → `PROXY`
-4. закреплённый `DIRECT_IP.list` → `DIRECT`
-5. `GEOIP,RU` → `DIRECT`
-6. всё остальное → `PROXY`
+Happ сохраняет DNS-серверы и DoH-поля ранее проверенного пользователем профиля: удалённый `8.8.8.8`, прямой `77.88.8.8`. Прежние фиксированные адреса `nalog.ru` в `DnsHosts` удалены: 27 октября 2026 года прямой DNS возвращал для `lkfl2.nalog.ru` два IP, а старая запись закрепляла только один. Сходство маршрутов Shadowrocket и Happ не означает идентичность их DNS-поведения. Конфиг не настраивает split-DNS для частных зон другой VPN.
 
-IP-правила этой фазы намеренно генерируются **без `no-resolve`**, чтобы они могли участвовать в IP fallback после промаха DOMAIN-фазы.
-
-### Национальные зоны
-
-Дополнительные правила:
-
-```text
-DOMAIN-SUFFIX,ru,DIRECT
-DOMAIN-SUFFIX,xn--p1ai,DIRECT
-DOMAIN-SUFFIX,su,DIRECT
-DOMAIN-SUFFIX,by,DIRECT
-```
-
-являются политикой этого профиля поверх RoscomVPN.
-
-Это означает, что обычный `.ru`, `.рф`, `.su` или `.by` домен, который не был ранее явно отправлен в `REJECT` или `PROXY`, идёт напрямую и не доходит до IP fallback.
-
-## Генерируемые ruleset'ы
-
-Генератор создаёт отдельные файлы для DOMAIN и IP правил:
-
-```text
-rules/BLOCK_DOMAIN.list
-rules/PROXY_DOMAIN.list
-rules/DIRECT_DOMAIN.list
-```
-
-`rules/DIRECT_IP.list` закреплён на проверенной версии Shadowrocket и не перезаписывается при автоматической генерации. 25 октября 2026 года upstream сократил `DirectIp` более чем на 30%; автоматический перенос такого изменения мог изменить работу российских сервисов. Happ использует этот же сохранённый список в категории `geoip:shadowrocket-direct`.
-
-Дополнительно, если соответствующие категории присутствуют в актуальном `HAPP/DEFAULT.JSON`, создаются:
-
-```text
-rules/BLOCK_IP.list
-rules/PROXY_IP.list
-```
-
-Если `BlockIp` или `ProxyIp` в upstream пусты, соответствующий файл не создаётся и `RULE-SET` не добавляется в `shadowrocket.conf`.
-
-Старые объединённые:
-
-```text
-BLOCK.list
-PROXY.list
-DIRECT.list
-```
-
-больше не используются.
-
-## Локальные и private-сети
-
-До основной DOMAIN-фазы расположены ранние правила:
-
-```text
-IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
-IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
-IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
-IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
-IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
-IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
-```
-
-`no-resolve` здесь используется намеренно: эти правила предназначены для соединений, где IP уже известен, и не должны вызывать преждевременный DNS-resolve до DOMAIN-фазы.
-
-Private IP-категории RoscomVPN также входят в `DIRECT_IP.list` и участвуют в полноценной IP-фазе уже без `no-resolve`.
-
-## Автообновление
-
-GitHub Actions каждые 6 часов:
-
-1. Загружает актуальный `HAPP/DEFAULT.JSON`.
-2. Проверяет ожидаемые:
-   - `GlobalProxy=true`
-   - `RouteOrder=block-proxy-direct`
-   - `DomainStrategy=IPIfNonMatch`
-3. Получает закреплённые версии geosite и geoip из URL самого RoscomVPN-профиля.
-4. Генерирует DOMAIN ruleset'ы и доступные IP ruleset'ы, сохраняя закреплённый `DIRECT_IP.list`.
-5. Не создаёт `BLOCK_IP` / `PROXY_IP`, если соответствующие upstream-категории пусты.
-6. Переносит `DnsHosts` в секцию `[Host]`.
-7. Преобразует совместимую часть `geosite:whitelist` в `always-real-ip`.
-8. Проверяет структуру доменов, CIDR, порядок DOMAIN/IP-фаз и DNS-защиту.
-9. Проверяет, что дополнительный `REJECT.list`, расположенный в DOMAIN-фазе, содержит только доменные правила.
-10. Создаёт профиль Happ и объединённые geo-файлы. При изменении правил или geo-файлов повышает `LastUpdated`, затем публикует изменения только после успешной генерации и проверок.
-
-Если upstream меняется несовместимо или отдаёт некорректные данные, сборка завершается ошибкой, а последняя рабочая опубликованная версия остаётся доступной.
-
-## DNS, Fake-IP и whitelist
-
-Основной DNS:
-
-```text
-tls://common.dot.dns.yandex.net
-```
-
-Fallback DNS:
-
-```text
-https://dns.google/dns-query#proxy
-https://cloudflare-dns.com/dns-query#proxy
-system
-```
-
-Для DIRECT DNS отключён переход на proxy fallback:
-
-```text
-dns-direct-fallback-proxy = false
-```
-
-Также включено:
-
-```text
-private-ip-answer = true
-```
-
-чтобы Shadowrocket принимал private DNS-ответы для локальных сетей и параллельных VPN.
-
-Обычные домены могут использовать Fake-IP.
-
-Совместимые домены из `geosite:whitelist`, а также необходимые записи `DnsHosts`, автоматически добавляются в:
-
-```text
-always-real-ip
-```
-
-Глобальный:
-
-```text
-always-real-ip = *
-```
-
-намеренно не используется.
-
-Домены сервисов проверки внешнего IP исключаются из `always-real-ip`, поскольку они принудительно маршрутизируются через `PROXY`.
-
-## Проверка внешнего IP
-
-Следующие сервисы всегда отправляются через VPN:
-
-```text
-2ip.ru
-checkip.amazonaws.com
-ifconfig.me
-ip.sb
-ipapi.is
-ipify.org
-iplocate.io
-showip.net
-```
-
-Это позволяет использовать их для проверки фактического внешнего адреса прокси независимо от остальных DIRECT-правил.
-
-## GeoLite2
-
-Для более свежей Country-базы можно указать в:
-
-**Settings → GeoLite2 Database → Country URL**
-
-```text
-https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb
-```
-
-Поле ASN можно оставить пустым.
-
-Без внешнего URL Shadowrocket использует встроенную GeoLite2 Country-базу.
-
-`GEOIP,RU,DIRECT` расположен в конце IP-фазы и служит дополнительным DIRECT fallback после RoscomVPN и Re-filter IP-правил.
-
-## Ограничения
-
-- Обобщённое regexp для односегментных private-hostname из `geosite:private` нельзя точно выразить используемыми правилами Shadowrocket, поэтому такое regexp пропускается.
-- Полные private FQDN и private IP-маршруты продолжают работать.
-- Re-filter загружается Shadowrocket напрямую из ветки `main`, поэтому изменения этих списков не проходят через генератор репозитория.
-- Дополнительный рекламный `REJECT.list` также загружается из внешнего репозитория, но генератор проверяет, что его текущий формат остаётся совместим с DOMAIN-фазой.
-- Национальные `.ru/.рф/.su/.by` правила являются дополнительной политикой данного профиля, а не прямым преобразованием отдельной категории RoscomVPN.
-- Scoped DNS только выбирает DNS-сервер; маршрут и сетевой доступ должны быть настроены отдельно.
-
-## Разработка
-
-Запуск генератора:
+## Проверка и разработка
 
 ```bash
 kotlinc -script scripts/generate.main.kts
+kotlinc -script scripts/verify-routing.main.kts
 ```
 
-Автоматически создаваемые:
+Автоматически создаются `rules/PROXY_DOMAIN.list`, `rules/PROXY_REFILTER_COMMUNITY.list`, `rules/PROXY_REFILTER_DOMAIN.list`, `rules/DIRECT_DOMAIN.list`, `rules/DIRECT_FOREIGN_DOMAIN.list`, `rules/DIRECT_IP.list`, `rules/SOURCE_MANIFEST.txt`, `shadowrocket.conf` и `happ/*`. `rules/DIRECT_PRIORITY_DOMAIN.list` поддерживается вручную. Временные проверочные входы `build/*` не публикуются.
 
-```text
-rules/*.list
-shadowrocket.conf
-happ/*
-```
-
-не редактируются вручную, кроме отдельного пересмотра закреплённого `rules/DIRECT_IP.list`.
-
-Pull request проверяется повторной генерацией.
-
-GitHub Actions также проверяет, что после запуска генератора committed-файлы совпадают с результатом генерации:
-
-```bash
-git diff --exit-code -- rules shadowrocket.conf happ
-```
+Pull request повторно запускает генерацию и проверяет, что все созданные файлы включены в изменение. В рабочем профиле видимый результат зависит также от выбранного сервера, DNS, доступности источников правил и сети провайдера.
 
 ## Источники и лицензии
 
-- [RoscomVPN routing](https://github.com/hydraponique/roscomvpn-routing)
-- [RoscomVPN geosite](https://github.com/hydraponique/roscomvpn-geosite)
-- [RoscomVPN geoip](https://github.com/hydraponique/roscomvpn-geoip)
+- [v2fly domain-list-community](https://github.com/v2fly/domain-list-community)
 - [Re-filter](https://github.com/1andrevich/Re-filter-lists)
+- [Loyalsoldier GeoIP](https://github.com/Loyalsoldier/geoip)
 
-Уведомления о лицензиях сторонних данных находятся в [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+Уведомления об условиях использования данных находятся в [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
