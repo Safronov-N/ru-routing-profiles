@@ -1,5 +1,5 @@
 {
-  "Name": "Shadowrocket-like Happ",
+  "Name": "Independent RU Routing",
   "GlobalProxy": "true",
   "UseChunkFiles": "true",
   "RemoteDns": "8.8.8.8",
@@ -12,25 +12,10 @@
   "DomesticDNSIP": "77.88.8.8",
   "Geoipurl": "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat",
   "Geositeurl": "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat",
-  "LastUpdated": "1793091325",
-  "DnsHosts": {
-    "lkfl2.nalog.ru": "213.24.64.175",
-    "lknpd.nalog.ru": "213.24.64.181"
-  },
+  "DnsHosts": {},
   "RouteOrder": "block-proxy-direct",
   "DirectSites": [
-    "geosite:private",
-    "geosite:category-ru",
-    "geosite:whitelist",
-    "geosite:microsoft",
-    "geosite:apple",
-    "geosite:epicgames",
-    "geosite:riot",
-    "geosite:escapefromtarkov",
-    "geosite:steam",
-    "geosite:twitch",
-    "geosite:pinterest",
-    "geosite:faceit",
+    "geosite:routing-direct",
     "domain:ru",
     "domain:xn--p1ai",
     "domain:su",
@@ -38,17 +23,12 @@
   ],
   "DirectIp": [
     "geoip:private",
-    "geoip:shadowrocket-direct",
     "geoip:ru"
   ],
   "ProxySites": [
-    "geosite:google-play",
-    "geosite:github",
-    "geosite:twitch-ads",
-    "geosite:youtube",
-    "geosite:telegram",
-    "geosite:shadowrocket-proxy",
+    "geosite:routing-proxy",
     "domain:2ip.ru",
+    "domain:2ip.io",
     "domain:checkip.amazonaws.com",
     "domain:ifconfig.me",
     "domain:ip.sb",
@@ -57,16 +37,10 @@
     "domain:iplocate.io",
     "domain:showip.net"
   ],
-  "ProxyIp": [
-    "geoip:shadowrocket-proxy"
-  ],
-  "BlockSites": [
-    "geosite:win-spy",
-    "geosite:torrent",
-    "geosite:category-ads",
-    "geosite:shadowrocket-reject"
-  ],
+  "ProxyIp": [],
+  "BlockSites": [],
   "BlockIp": [],
   "DomainStrategy": "IPIfNonMatch",
-  "FakeDNS": "false"
+  "FakeDNS": "false",
+  "LastUpdated": "1793108032"
 }
