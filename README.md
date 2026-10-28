@@ -1,6 +1,6 @@
 # Independent RU Routing
 
-Автообновляемая маршрутизация для Shadowrocket и Happ. Профиль использует собственную политику и три независимых входа: [v2fly domain-list-community](https://github.com/v2fly/domain-list-community) для категорий сервисов, [Re-filter](https://github.com/1andrevich/Re-filter-lists) для дополнительных доменов, требующих прокси в России, и [Loyalsoldier GeoIP](https://github.com/Loyalsoldier/geoip) для российских IP-диапазонов. RoscomVPN не участвует в сборке. Старое имя GitHub-репозитория сохранено в адресах опубликованных файлов.
+Автообновляемая маршрутизация для Shadowrocket и Happ. Профиль использует собственную политику и три независимых входа: [v2fly domain-list-community](https://github.com/v2fly/domain-list-community) для категорий сервисов, [Re-filter](https://github.com/1andrevich/Re-filter-lists) для дополнительных доменов, требующих прокси в России, и [Loyalsoldier GeoIP](https://github.com/Loyalsoldier/geoip) для российских IP-диапазонов. RoscomVPN не участвует в сборке. Опубликованные файлы используют адреса репозитория `Safronov-N/ru-routing-profiles`.
 
 Генератор не содержит VPN-серверов, ключей и учётных данных. `PROXY` использует выбранное в приложении подключение.
 
@@ -11,7 +11,7 @@
 Импортируйте конфигурацию:
 
 ```text
-https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/shadowrocket.conf
+https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/shadowrocket.conf
 ```
 
 Выберите своё VPN-подключение и режим маршрутизации **Config**. Включите фоновое обновление конфигурации в Shadowrocket и Background App Refresh в iOS. Фактическое время применения новых правил зависит от обновления конфигурации и списков самим приложением.

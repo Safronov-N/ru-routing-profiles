@@ -869,21 +869,21 @@ check("hydraponique/" !in shadowrocketConfig && "zeklop/" !in shadowrocketConfig
 val configLines = normalizedLines(shadowrocketConfig)
 val expectedRuleOrder =
     listOf(
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/PROXY_DOMAIN.list,PROXY",
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/DIRECT_PRIORITY_DOMAIN.list,DIRECT",
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/PROXY_REFILTER_COMMUNITY.list,PROXY",
         "DOMAIN-SUFFIX,ru,DIRECT",
         "DOMAIN-SUFFIX,by,DIRECT",
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/PROXY_REFILTER_DOMAIN.list,PROXY",
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/DIRECT_DOMAIN.list,DIRECT",
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/DIRECT_FOREIGN_DOMAIN.list,DIRECT",
-        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/" +
+        "RULE-SET,https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/" +
             "main/rules/DIRECT_IP.list,DIRECT",
         "GEOIP,RU,DIRECT",
         "FINAL,PROXY"
@@ -945,10 +945,10 @@ val happFields =
         "DomesticDNSDomain" to JsonStringValue("https://77.88.8.8/dns-query"),
         "DomesticDNSIP" to JsonStringValue("77.88.8.8"),
         "Geoipurl" to JsonStringValue(
-            "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat"
+            "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geoip.dat"
         ),
         "Geositeurl" to JsonStringValue(
-            "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat"
+            "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geosite.dat"
         ),
         "DnsHosts" to JsonObjectValue(emptyMap()),
         "RouteOrder" to JsonStringValue("block-proxy-direct"),
