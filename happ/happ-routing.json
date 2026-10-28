@@ -10,8 +10,8 @@
   "DomesticDNSType": "DoH",
   "DomesticDNSDomain": "https://77.88.8.8/dns-query",
   "DomesticDNSIP": "77.88.8.8",
-  "Geoipurl": "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat",
-  "Geositeurl": "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat",
+  "Geoipurl": "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geoip.dat",
+  "Geositeurl": "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geosite.dat",
   "DnsHosts": {},
   "RouteOrder": "block-proxy-direct",
   "DirectSites": [
@@ -42,5 +42,5 @@
   "BlockIp": [],
   "DomainStrategy": "IPIfNonMatch",
   "FakeDNS": "false",
-  "LastUpdated": "1793108032"
+  "LastUpdated": "1793174730"
 }

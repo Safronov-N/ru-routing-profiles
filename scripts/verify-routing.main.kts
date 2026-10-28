@@ -345,7 +345,7 @@ fun checkedRulesPath(url: String): Path {
     val segments = uri.path.trimStart('/').split('/')
     check(
         segments.size == 5 && segments[0] == "Safronov-N" &&
-            segments[1] == "shadowrocket-roscomvpn-routing" &&
+            segments[1] == "ru-routing-profiles" &&
             segments[2] == "main" && segments[3] == "rules"
     ) {
         "Некорректный путь собственного списка: $url"
@@ -753,9 +753,9 @@ fun verifyHapp() {
             "DomesticDNSIP" to "77.88.8.8",
             "FakeDNS" to "false",
             "Geoipurl" to
-                "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geoip.dat",
+                "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geoip.dat",
             "Geositeurl" to
-                "https://raw.githubusercontent.com/Safronov-N/shadowrocket-roscomvpn-routing/main/happ/geosite.dat"
+                "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geosite.dat"
         )
     expectedFields.forEach { (key, expected) ->
         val actual = profile.text(key)
