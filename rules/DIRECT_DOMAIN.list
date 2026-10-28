@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: 1b81d3cd34096e5d8cac6bca5935e80f30e990f0
+# Source commit: 333d8a1810d04600bcb00870155a369954ed37f5
 DOMAIN,arenda.yandex.ru
 DOMAIN,bilet.nspk.ru
 DOMAIN,edu.tinkoff.ru
@@ -611,6 +611,7 @@ DOMAIN-SUFFIX,itb.ru
 DOMAIN-SUFFIX,itirex.ru
 DOMAIN-SUFFIX,ivanovo.ru
 DOMAIN-SUFFIX,ivi.ru
+DOMAIN-SUFFIX,ivi.tv
 DOMAIN-SUFFIX,ivicdn.tv
 DOMAIN-SUFFIX,ixbt.com
 DOMAIN-SUFFIX,ixbt.games
