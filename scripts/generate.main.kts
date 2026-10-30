@@ -2,6 +2,7 @@
 
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.IDN
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.URI
@@ -10,9 +11,110 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
 import java.util.Base64
+import java.util.Locale
+
+data class IcannPublicSuffixes(
+    val version: String,
+    val sourceSha256: String,
+    val exactRules: Set<String>,
+    val wildcardBases: Set<String>,
+    val exceptions: Set<String>
+) {
+    fun contains(domain: String): Boolean {
+        val normalized =
+            if (domain.all { it.code < 128 }) {
+                domain.lowercase(Locale.ROOT)
+            } else {
+                IDN.toASCII(domain, IDN.ALLOW_UNASSIGNED).lowercase(Locale.ROOT)
+            }
+        if (normalized in exceptions) return false
+        // База wildcard тоже охватывает всю административную область, а не отдельный сервис.
+        return normalized in exactRules || normalized in wildcardBases ||
+            normalized.substringAfter('.', "") in wildcardBases
+    }
+}
+
+fun parseIcannPublicSuffixes(source: String): IcannPublicSuffixes {
+    val lines =
+        source
+            .lineSequence()
+            .map { it.trim() }
+            .toList()
+    val begin = "// ===BEGIN ICANN DOMAINS==="
+    val end = "// ===END ICANN DOMAINS==="
+    val privateBegin = "// ===BEGIN PRIVATE DOMAINS==="
+    val privateEnd = "// ===END PRIVATE DOMAINS==="
+    listOf(begin, end, privateBegin, privateEnd).forEach { marker ->
+        check(lines.count { it == marker } == 1) { "PSL: ожидался ровно один маркер $marker" }
+    }
+    val start = lines.indexOf(begin)
+    val finish = lines.indexOf(end)
+    check(start < finish && finish < lines.indexOf(privateBegin) &&
+        lines.indexOf(privateBegin) < lines.indexOf(privateEnd)) {
+        "PSL: нарушен порядок разделов ICANN/PRIVATE"
+    }
+    val version =
+        lines.singleOrNull { it.startsWith("// VERSION: ") }?.removePrefix("// VERSION: ")
+            ?: error("PSL: отсутствует единственная версия снимка")
+    check(Regex("\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_UTC").matches(version)) {
+        "PSL: некорректная версия $version"
+    }
+    val exactRules = mutableSetOf<String>()
+    val wildcardBases = mutableSetOf<String>()
+    val exceptions = mutableSetOf<String>()
+    lines
+        .subList(start + 1, finish)
+        .filter { it.isNotEmpty() && !it.startsWith("//") }
+        .forEach { rule ->
+            val value =
+                when {
+                    rule.startsWith("!") -> rule.removePrefix("!")
+                    rule.startsWith("*.") -> rule.removePrefix("*.")
+                    else -> rule
+                }
+            check(value.isNotEmpty() && value.none { it.isWhitespace() || it in "!*" }) {
+                "PSL: некорректное правило $rule"
+            }
+            val domain =
+                IDN.toASCII(value, IDN.USE_STD3_ASCII_RULES or IDN.ALLOW_UNASSIGNED).lowercase(Locale.ROOT)
+            check(domain.length in 1..253 && domain.split('.').all { label ->
+                label.length in 1..63 && !label.startsWith('-') && !label.endsWith('-')
+            }) { "PSL: некорректный домен $rule" }
+            val target =
+                when {
+                    rule.startsWith("!") -> exceptions
+                    rule.startsWith("*.") -> wildcardBases
+                    else -> exactRules
+                }
+            check(target.add(domain)) { "PSL: повторное правило $rule" }
+        }
+    check(exactRules.isNotEmpty()) { "PSL: пустой раздел ICANN" }
+    check(exceptions.all { it.substringAfter('.', "") in wildcardBases }) {
+        "PSL: исключение не имеет родительского wildcard-правила"
+    }
+    val hash =
+        MessageDigest
+            .getInstance("SHA-256")
+            .digest(source.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+    return IcannPublicSuffixes(version, hash, exactRules, wildcardBases, exceptions)
+}
+
+fun loadIcannPublicSuffixes(path: Path): IcannPublicSuffixes {
+    val bytes = Files.readAllBytes(path)
+    val source = String(bytes, Charsets.UTF_8)
+    check(source.toByteArray(Charsets.UTF_8).contentEquals(bytes)) { "PSL: некорректный UTF-8" }
+    return parseIcannPublicSuffixes(source).also { suffixes ->
+        check(suffixes.exactRules.size >= 5_000 && suffixes.wildcardBases.isNotEmpty() &&
+            suffixes.exceptions.isNotEmpty()) {
+            "PSL: снимок ICANN неожиданно мал или неполон"
+        }
+    }
+}
 
 val httpClient =
     HttpClient
@@ -777,6 +879,8 @@ val reFilterDomains = reFilterSources.values.flatten().distinct()
 check(reFilterDomains.size >= 50_000) {
     "Re-filter содержит только ${reFilterDomains.size} уникальных доменов"
 }
+val publicSuffixes = loadIcannPublicSuffixes(Path.of("data/public_suffix_list.dat"))
+val excludedPublicSuffixes = reFilterDomains.filter(publicSuffixes::contains).sorted()
 val nationalSuffixes = listOf("ru", "xn--p1ai", "su", "by")
 fun isNationalDomain(domain: String): Boolean = nationalSuffixes.any { domain.endsWith(".$it") }
 
@@ -785,13 +889,17 @@ check(reFilterDomains.none { candidate ->
 }) {
     "Re-filter содержит родительскую зону приоритетного DIRECT-правила"
 }
-val communityDomains = checkNotNull(reFilterSources["community.lst"])
-val nationalCommunityCount = communityDomains.count(::isNationalDomain)
+val rawCommunityDomains = checkNotNull(reFilterSources["community.lst"])
+val communityDomains = rawCommunityDomains.filterNot(publicSuffixes::contains)
+val nationalCommunityCount = rawCommunityDomains.count(::isNationalDomain)
 check(nationalCommunityCount <= 100) {
     "Re-filter community содержит неожиданно много национальных доменов: $nationalCommunityCount"
 }
 val broadNationalCount = checkNotNull(reFilterSources["domains_all.lst"]).count(::isNationalDomain)
-val broadForeignDomains = checkNotNull(reFilterSources["domains_all.lst"]).filterNot(::isNationalDomain)
+val broadForeignDomains =
+    checkNotNull(reFilterSources["domains_all.lst"])
+        .filterNot(::isNationalDomain)
+        .filterNot(publicSuffixes::contains)
 val communityProxyRules = communityDomains.distinct().map { domain -> "DOMAIN-SUFFIX,$domain" }.sorted()
 val broadProxyRules = broadForeignDomains.distinct().map { domain -> "DOMAIN-SUFFIX,$domain" }.sorted()
 val filteredReFilterRules =
@@ -1015,6 +1123,10 @@ generatedFiles[manifestPath] =
         appendLine("v2fly_epicgames_regex_skipped=$knownEpicRegexSkipped")
         appendLine("refilter_commit=$reFilterCommit")
         appendLine("refilter_domains_updated_at=$reFilterUpdatedAt")
+        appendLine("public_suffix_version=${publicSuffixes.version}")
+        appendLine("public_suffix_sha256=${publicSuffixes.sourceSha256}")
+        appendLine("refilter_public_suffix_excluded=${excludedPublicSuffixes.size}")
+        appendLine("refilter_public_suffix_excluded_domains=${excludedPublicSuffixes.joinToString(",")}")
         appendLine("refilter_broad_national_excluded=$broadNationalCount")
         appendLine("refilter_community_national_kept=$nationalCommunityCount")
         appendLine("refilter_broad_foreign_rules=${broadProxyRules.size}")
@@ -1040,4 +1152,5 @@ println("DIRECT_DOMAIN.list: ${directDomainRules.size} правил")
 println("DIRECT_FOREIGN_DOMAIN.list: ${directForeignRules.size} правил")
 println("DIRECT_IP.list: ${directIpRules.size} правил")
 println("Re-filter: ${reFilterDomains.size} доменов")
+println("Re-filter: исключено ${excludedPublicSuffixes.size} публичных зон ICANN")
 println("v2fly: пропущено $taggedDomainRulesSkipped строк с атрибутами")

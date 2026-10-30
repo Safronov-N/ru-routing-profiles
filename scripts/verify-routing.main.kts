@@ -1,11 +1,113 @@
 #!/usr/bin/env kotlin
 
+import java.net.IDN
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.Base64
+import java.util.Locale
+
+data class IcannPublicSuffixes(
+    val version: String,
+    val sourceSha256: String,
+    val exactRules: Set<String>,
+    val wildcardBases: Set<String>,
+    val exceptions: Set<String>
+) {
+    fun contains(domain: String): Boolean {
+        val normalized =
+            if (domain.all { it.code < 128 }) {
+                domain.lowercase(Locale.ROOT)
+            } else {
+                IDN.toASCII(domain, IDN.ALLOW_UNASSIGNED).lowercase(Locale.ROOT)
+            }
+        if (normalized in exceptions) return false
+        // База wildcard тоже охватывает всю административную область, а не отдельный сервис.
+        return normalized in exactRules || normalized in wildcardBases ||
+            normalized.substringAfter('.', "") in wildcardBases
+    }
+}
+
+fun parseIcannPublicSuffixes(source: String): IcannPublicSuffixes {
+    val lines =
+        source
+            .lineSequence()
+            .map { it.trim() }
+            .toList()
+    val begin = "// ===BEGIN ICANN DOMAINS==="
+    val end = "// ===END ICANN DOMAINS==="
+    val privateBegin = "// ===BEGIN PRIVATE DOMAINS==="
+    val privateEnd = "// ===END PRIVATE DOMAINS==="
+    listOf(begin, end, privateBegin, privateEnd).forEach { marker ->
+        check(lines.count { it == marker } == 1) { "PSL: ожидался ровно один маркер $marker" }
+    }
+    val start = lines.indexOf(begin)
+    val finish = lines.indexOf(end)
+    check(start < finish && finish < lines.indexOf(privateBegin) &&
+        lines.indexOf(privateBegin) < lines.indexOf(privateEnd)) {
+        "PSL: нарушен порядок разделов ICANN/PRIVATE"
+    }
+    val version =
+        lines.singleOrNull { it.startsWith("// VERSION: ") }?.removePrefix("// VERSION: ")
+            ?: error("PSL: отсутствует единственная версия снимка")
+    check(Regex("\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}_UTC").matches(version)) {
+        "PSL: некорректная версия $version"
+    }
+    val exactRules = mutableSetOf<String>()
+    val wildcardBases = mutableSetOf<String>()
+    val exceptions = mutableSetOf<String>()
+    lines
+        .subList(start + 1, finish)
+        .filter { it.isNotEmpty() && !it.startsWith("//") }
+        .forEach { rule ->
+            val value =
+                when {
+                    rule.startsWith("!") -> rule.removePrefix("!")
+                    rule.startsWith("*.") -> rule.removePrefix("*.")
+                    else -> rule
+                }
+            check(value.isNotEmpty() && value.none { it.isWhitespace() || it in "!*" }) {
+                "PSL: некорректное правило $rule"
+            }
+            val domain =
+                IDN.toASCII(value, IDN.USE_STD3_ASCII_RULES or IDN.ALLOW_UNASSIGNED).lowercase(Locale.ROOT)
+            check(domain.length in 1..253 && domain.split('.').all { label ->
+                label.length in 1..63 && !label.startsWith('-') && !label.endsWith('-')
+            }) { "PSL: некорректный домен $rule" }
+            val target =
+                when {
+                    rule.startsWith("!") -> exceptions
+                    rule.startsWith("*.") -> wildcardBases
+                    else -> exactRules
+                }
+            check(target.add(domain)) { "PSL: повторное правило $rule" }
+        }
+    check(exactRules.isNotEmpty()) { "PSL: пустой раздел ICANN" }
+    check(exceptions.all { it.substringAfter('.', "") in wildcardBases }) {
+        "PSL: исключение не имеет родительского wildcard-правила"
+    }
+    val hash =
+        MessageDigest
+            .getInstance("SHA-256")
+            .digest(source.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+    return IcannPublicSuffixes(version, hash, exactRules, wildcardBases, exceptions)
+}
+
+fun loadIcannPublicSuffixes(path: Path): IcannPublicSuffixes {
+    val bytes = Files.readAllBytes(path)
+    val source = String(bytes, Charsets.UTF_8)
+    check(source.toByteArray(Charsets.UTF_8).contentEquals(bytes)) { "PSL: некорректный UTF-8" }
+    return parseIcannPublicSuffixes(source).also { suffixes ->
+        check(suffixes.exactRules.size >= 5_000 && suffixes.wildcardBases.isNotEmpty() &&
+            suffixes.exceptions.isNotEmpty()) {
+            "PSL: снимок ICANN неожиданно мал или неполон"
+        }
+    }
+}
 
 sealed interface HappJsonValue
 
@@ -598,15 +700,77 @@ fun verifyReFilterRuleSet(name: String, expected: List<String>) {
     }
     println("$path: ${expected.size} проверенных DOMAIN-SUFFIX правил")
 }
-val communityDomains = activeLines(Path.of("build/community.lst")).toSet()
+val icannSuffixes = loadIcannPublicSuffixes(Path.of("data/public_suffix_list.dat"))
+val publicSuffixFixture =
+    """
+    // VERSION: 2026-10-28_13-15-55_UTC
+    // ===BEGIN ICANN DOMAINS===
+    com
+    com.cy
+    *.ck
+    !www.ck
+    *.kawasaki.jp
+    !city.kawasaki.jp
+    公司.cn
+    // ===END ICANN DOMAINS===
+    // ===BEGIN PRIVATE DOMAINS===
+    pages.dev
+    // ===END PRIVATE DOMAINS===
+    """.trimIndent()
+val fixtureSuffixes = parseIcannPublicSuffixes(publicSuffixFixture)
+listOf("com", "com.cy", "ck", "foo.ck", "kawasaki.jp", "foo.kawasaki.jp", "公司.cn", "xn--55qx5d.cn").forEach {
+    check(fixtureSuffixes.contains(it)) { "Не распознана административная зона: $it" }
+}
+listOf("2gis.com.cy", "www.ck", "deep.foo.ck", "city.kawasaki.jp", "deep.city.kawasaki.jp", "pages.dev").forEach {
+    check(!fixtureSuffixes.contains(it)) { "Домен сервиса ошибочно принят за административную зону: $it" }
+}
+listOf(
+    publicSuffixFixture.replace("// ===BEGIN ICANN DOMAINS===", ""),
+    publicSuffixFixture.replace("// ===END ICANN DOMAINS===", ""),
+    publicSuffixFixture.replace("com\n", "bad..suffix\n"),
+    publicSuffixFixture.replace("com\n", "// ===BEGIN ICANN DOMAINS===\ncom\n"),
+    publicSuffixFixture.replace(Regex("(?m)^(?!//).+$"), "")
+).forEach { malformed ->
+    check(runCatching { parseIcannPublicSuffixes(malformed) }.isFailure) {
+        "Повреждённый Public Suffix List принят без ошибки"
+    }
+}
+listOf("com.cy", "gov.pl", "co.uk").forEach { suffix ->
+    check(icannSuffixes.contains(suffix)) { "Нет контрольной административной зоны: $suffix" }
+}
+listOf("2gis.com.cy", "politis.com.cy", "example.co.uk", "pages.dev", "notion.site", "gitlab.io").forEach {
+    check(!icannSuffixes.contains(it)) { "Конкретный сервис ошибочно исключён по Public Suffix List: $it" }
+}
+val rawCommunityDomains = activeLines(Path.of("build/community.lst")).toSet()
+val rawBroadDomains = activeLines(Path.of("build/domains_all.lst"))
+val excludedPublicSuffixes =
+    (rawCommunityDomains + rawBroadDomains)
+        .filter(icannSuffixes::contains)
+        .distinct()
+        .sorted()
+val sourceManifest = activeLines(Path.of("rules/SOURCE_MANIFEST.txt")).associate { line ->
+    line.substringBefore('=') to line.substringAfter('=')
+}
+check(sourceManifest["public_suffix_version"] == icannSuffixes.version &&
+    sourceManifest["public_suffix_sha256"] == icannSuffixes.sourceSha256) {
+    "Снимок Public Suffix List не совпадает с SOURCE_MANIFEST.txt"
+}
+check(sourceManifest["refilter_public_suffix_excluded"] == excludedPublicSuffixes.size.toString() &&
+    sourceManifest["refilter_public_suffix_excluded_domains"] == excludedPublicSuffixes.joinToString(",")) {
+    "Исключённые административные зоны не совпадают с SOURCE_MANIFEST.txt"
+}
+val communityDomains = rawCommunityDomains.filterNot(icannSuffixes::contains).toSet()
+println("Re-filter: исключены административные зоны ${excludedPublicSuffixes.joinToString(", ")}")
 verifyReFilterRuleSet(
     "PROXY_REFILTER_COMMUNITY.list",
     communityDomains.map { domain -> "DOMAIN-SUFFIX,$domain" }.sorted()
 )
 verifyReFilterRuleSet(
     "PROXY_REFILTER_DOMAIN.list",
-    activeLines(Path.of("build/domains_all.lst"))
-        .filterNot { domain -> nationalZones.any { zone -> domain.endsWith(".$zone") } }
+    rawBroadDomains
+        .filterNot { domain ->
+            icannSuffixes.contains(domain) || nationalZones.any { zone -> domain.endsWith(".$zone") }
+        }
         .distinct()
         .map { domain -> "DOMAIN-SUFFIX,$domain" }
         .sorted()
@@ -677,6 +841,8 @@ val expectations =
         "ozon.ru" to "DIRECT",
         "api.ozon.ru" to "DIRECT",
         "netmonet.co" to "DIRECT",
+        "2gis.com.cy" to "DIRECT",
+        "politis.com.cy" to "PROXY",
         "213.24.64.175" to "DIRECT",
         "10.1.2.3" to "DIRECT",
         "127.0.0.1" to "DIRECT",
@@ -809,6 +975,9 @@ fun verifyHapp() {
     check("4pda.ru" in communityDomains) { "4pda.ru отсутствует в community.lst" }
     val proxyRules = checkNotNull(geosite["ROUTING-PROXY"]) + happDomainRules(proxySites, "ProxySites", "PROXY")
     val directRules = checkNotNull(geosite["ROUTING-DIRECT"]) + happDomainRules(directSites, "DirectSites", "DIRECT")
+    check(proxyRules.none { it.type == "DOMAIN-SUFFIX" && it.value in excludedPublicSuffixes }) {
+        "Исключённая административная зона осталась в Happ geosite.dat"
+    }
     check(proxyRules.size >= 50_000 && directRules.size >= 500) {
         "Мало доменов Happ: PROXY=${proxyRules.size}, DIRECT=${directRules.size}"
     }
@@ -841,6 +1010,8 @@ fun verifyHapp() {
             "ozon.ru" to "DIRECT",
             "api.ozon.ru" to "DIRECT",
             "netmonet.co" to "DIRECT",
+            "2gis.com.cy" to "DIRECT",
+            "politis.com.cy" to "PROXY",
             nationalCanary to "DIRECT"
         )
     foreignDirectCanaries.forEach { domain -> domainExpectations[domain] = "DIRECT" }

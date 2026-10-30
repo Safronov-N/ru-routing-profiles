@@ -4,8 +4,8 @@ on:
   push:
     paths:
       - .github/workflows/update-rules.yml
-      - scripts/generate.main.kts
-      - scripts/verify-routing.main.kts
+      - scripts/**
+      - data/public_suffix_list.dat
       - shadowrocket.template.conf
       - shadowrocket.conf
       - rules/**
@@ -13,8 +13,8 @@ on:
   pull_request:
     paths:
       - .github/workflows/update-rules.yml
-      - scripts/generate.main.kts
-      - scripts/verify-routing.main.kts
+      - scripts/**
+      - data/public_suffix_list.dat
       - shadowrocket.template.conf
       - shadowrocket.conf
       - rules/**

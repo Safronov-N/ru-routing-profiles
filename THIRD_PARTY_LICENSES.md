@@ -2,6 +2,12 @@
 
 Генерируемые списки и geo-файлы содержат переработанные данные внешних проектов. Ниже указаны источники, их опубликованные лицензии и сделанные преобразования. Права на исходные данные сохраняются за авторами.
 
+## Public Suffix List
+
+[`data/public_suffix_list.dat`](data/public_suffix_list.dat) содержит неизменённый снимок [официального Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat). Исходные уведомления, версия и commit сохранены в самом файле. Список распространяется на условиях [Mozilla Public License 2.0](https://mozilla.org/MPL/2.0/).
+
+Генератор использует только секцию ICANN для исключения административных зон из Re-filter; правила PRIVATE не используются. Содержимое PSL не добавляется в маршруты. Версия и SHA-256 защитного снимка записываются в `rules/SOURCE_MANIFEST.txt`.
+
 ## v2fly domain-list-community
 
 [Исходные доменные категории](https://github.com/v2fly/domain-list-community) преобразуются в `rules/PROXY_DOMAIN.list`, `rules/DIRECT_DOMAIN.list`, `rules/DIRECT_FOREIGN_DOMAIN.list` и категории `ROUTING-PROXY` / `ROUTING-DIRECT` файла `happ/geosite.dat`. Используемый коммит записан в `rules/SOURCE_MANIFEST.txt`.
