@@ -1,7 +1,5 @@
 # Сгенерировано из проверенного источника
 # Source commit: 1daade8c4bb957d21d1f5c09c2b050d699e8e96c
-DOMAIN,copilot-proxy.githubusercontent.com
-DOMAIN,copilot-workspace.githubnext.com
 DOMAIN,copilotprodattachments.blob.core.windows.net
 DOMAIN,discord-attachments-uploads-prd.storage.googleapis.com
 DOMAIN,github-api.arkoselabs.com

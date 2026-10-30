@@ -1,5 +1,6 @@
 # Снимки независимых источников маршрутизации
 source_profile=independent-v1
+domain_rule_minimization=suffix-coverage-v1
 v2fly_commit=1daade8c4bb957d21d1f5c09c2b050d699e8e96c
 v2fly_category_ru_updated_at=2026-10-22T03:21:18Z
 v2fly_proxy_categories=youtube,telegram,github,instagram,discord,google-play,openai
