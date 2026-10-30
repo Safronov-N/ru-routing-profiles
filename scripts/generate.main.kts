@@ -572,6 +572,49 @@ fun matchesDomainRule(rule: String, hostname: String): Boolean {
     }
 }
 
+fun hasCoveringDomainSuffix(domain: String, suffixes: Set<String>): Boolean {
+    var candidate = domain
+    while (candidate.isNotEmpty()) {
+        if (candidate in suffixes) return true
+        candidate = candidate.substringAfter('.', "")
+    }
+    return false
+}
+
+fun minimizeDomainRules(rules: List<String>): List<String> {
+    val original = rules.distinct()
+    val originalSet = original.toSet()
+    val suffixes =
+        original
+            .filter { it.startsWith("DOMAIN-SUFFIX,") }
+            .map { it.substringAfter(',') }
+            .toSet()
+    // Удаляем только полное покрытие внутри одного набора; типы и порядок не меняются.
+    val minimized = original.filter { rule ->
+        val value = rule.substringAfter(',', "")
+        when (rule.substringBefore(',')) {
+            "DOMAIN" -> !hasCoveringDomainSuffix(value, suffixes)
+            "DOMAIN-SUFFIX" -> !hasCoveringDomainSuffix(value.substringAfter('.', ""), suffixes)
+            else -> true
+        }
+    }
+    val retained = minimized.toSet()
+    val retainedSuffixes =
+        minimized
+            .filter { it.startsWith("DOMAIN-SUFFIX,") }
+            .map { it.substringAfter(',') }
+            .toSet()
+    check(retained.all { it in originalSet }) { "Минимизация добавила новые правила" }
+    original.forEach { rule ->
+        check(rule in retained ||
+            (rule.substringBefore(',') in setOf("DOMAIN", "DOMAIN-SUFFIX") &&
+                hasCoveringDomainSuffix(rule.substringAfter(','), retainedSuffixes))) {
+            "Минимизация потеряла покрытие правила: $rule"
+        }
+    }
+    return minimized
+}
+
 fun isValidIpv4(address: String): Boolean {
     val parts = address.split('.')
     return parts.size == 4 &&
@@ -644,7 +687,8 @@ fun validateGeneratedRuleCount(
         "Список ${path.fileName} неожиданно пуст"
     }
 
-    val previousRules = existingRules(path)
+    // Оба выпуска сравниваются в одной форме, включая переход с несжатых списков.
+    val previousRules = existingRules(path)?.let { minimizeDomainRules(it.toList()).toSet() }
     if (previousRules != null && previousRules.isNotEmpty()) {
         val previousRuleCount = previousRules.size
         check(rules.size.toLong() * 100 >= previousRuleCount.toLong() * 70) {
@@ -954,16 +998,42 @@ fun generatedRuleFile(
     }
 }
 
+fun optimizedDomainRules(name: String, rules: List<String>): List<String> {
+    val original = rules.distinct()
+    val minimized = minimizeDomainRules(original)
+    generatedValidationFiles[Path.of("build/domain-rules", name)] = original.joinToString("\n", postfix = "\n")
+    println("Доменные правила $name: ${original.size} -> ${minimized.size}")
+    return minimized
+}
+
+fun generatedDomainRuleFile(path: Path, rules: List<String>, sourceCommit: String): String =
+    generatedRuleFile(path, optimizedDomainRules(path.fileName.toString(), rules), sourceCommit)
+
+if (samePolicyVersion) {
+    // Пороги исходных объёмов сохраняются отдельно от минимизированных результатов.
+    mapOf(
+        "proxy_rules_total" to proxyDomainRules.size,
+        "v2fly_direct_rules" to directDomainRules.size,
+        "foreign_direct_rules_total" to directForeignRules.size,
+        "refilter_community_rules" to communityProxyRules.size,
+        "refilter_broad_foreign_rules" to broadProxyRules.size
+    ).forEach { (name, count) -> validateSourceCount(name, count, previousCounts) }
+}
+
 generatedFiles[rulesDirectory.resolve("PROXY_DOMAIN.list")] =
-    generatedRuleFile(rulesDirectory.resolve("PROXY_DOMAIN.list"), proxyDomainRules, v2flyCommit)
+    generatedDomainRuleFile(rulesDirectory.resolve("PROXY_DOMAIN.list"), proxyDomainRules, v2flyCommit)
 generatedFiles[rulesDirectory.resolve("PROXY_REFILTER_COMMUNITY.list")] =
-    generatedRuleFile(rulesDirectory.resolve("PROXY_REFILTER_COMMUNITY.list"), communityProxyRules, reFilterCommit)
+    generatedDomainRuleFile(
+        rulesDirectory.resolve("PROXY_REFILTER_COMMUNITY.list"),
+        communityProxyRules,
+        reFilterCommit
+    )
 generatedFiles[rulesDirectory.resolve("PROXY_REFILTER_DOMAIN.list")] =
-    generatedRuleFile(rulesDirectory.resolve("PROXY_REFILTER_DOMAIN.list"), broadProxyRules, reFilterCommit)
+    generatedDomainRuleFile(rulesDirectory.resolve("PROXY_REFILTER_DOMAIN.list"), broadProxyRules, reFilterCommit)
 generatedFiles[rulesDirectory.resolve("DIRECT_DOMAIN.list")] =
-    generatedRuleFile(rulesDirectory.resolve("DIRECT_DOMAIN.list"), directDomainRules, v2flyCommit)
+    generatedDomainRuleFile(rulesDirectory.resolve("DIRECT_DOMAIN.list"), directDomainRules, v2flyCommit)
 generatedFiles[rulesDirectory.resolve("DIRECT_FOREIGN_DOMAIN.list")] =
-    generatedRuleFile(rulesDirectory.resolve("DIRECT_FOREIGN_DOMAIN.list"), directForeignRules, v2flyCommit)
+    generatedDomainRuleFile(rulesDirectory.resolve("DIRECT_FOREIGN_DOMAIN.list"), directForeignRules, v2flyCommit)
 generatedFiles[rulesDirectory.resolve("DIRECT_IP.list")] =
     generatedRuleFile(rulesDirectory.resolve("DIRECT_IP.list"), directIpRules, ruGeoipCommit)
 
@@ -1020,9 +1090,12 @@ val ipCheckProxyDomains =
         "iplocate.io",
         "showip.net"
     )
-val happProxyRules = (proxyDomainRules + filteredReFilterRules).distinct()
+val happProxyRules = optimizedDomainRules("ROUTING-PROXY.list", proxyDomainRules + filteredReFilterRules)
 val happDirectRules =
-    (directDomainRules + directForeignRules + priorityDomains.map { domain -> "DOMAIN-SUFFIX,$domain" }).distinct()
+    optimizedDomainRules(
+        "ROUTING-DIRECT.list",
+        directDomainRules + directForeignRules + priorityDomains.map { domain -> "DOMAIN-SUFFIX,$domain" }
+    )
 val happGeosite =
     geositeEntry("ROUTING-PROXY", happProxyRules) +
         geositeEntry("ROUTING-DIRECT", happDirectRules)
@@ -1107,6 +1180,7 @@ generatedFiles[manifestPath] =
     buildString {
         appendLine("# Снимки независимых источников маршрутизации")
         appendLine("source_profile=independent-v1")
+        appendLine("domain_rule_minimization=suffix-coverage-v1")
         appendLine("v2fly_commit=$v2flyCommit")
         appendLine("v2fly_category_ru_updated_at=$v2flyDirectUpdatedAt")
         appendLine("v2fly_proxy_categories=${proxyCategories.joinToString(",")}")
@@ -1141,15 +1215,16 @@ generatedFiles[manifestPath] =
 Files.createDirectories(rulesDirectory)
 Files.createDirectories(Path.of("happ"))
 Files.createDirectories(Path.of("build"))
+Files.createDirectories(Path.of("build/domain-rules"))
 generatedFiles.forEach { (path, content) -> Files.writeString(path, content) }
 generatedBinaryFiles.forEach { (path, content) -> Files.write(path, content) }
 generatedValidationFiles.forEach { (path, content) -> Files.writeString(path, content) }
 listOf("BLOCK_DOMAIN.list", "BLOCK_IP.list", "PROXY_IP.list").forEach { name ->
     Files.deleteIfExists(rulesDirectory.resolve(name))
 }
-println("PROXY_DOMAIN.list: ${proxyDomainRules.size} правил")
-println("DIRECT_DOMAIN.list: ${directDomainRules.size} правил")
-println("DIRECT_FOREIGN_DOMAIN.list: ${directForeignRules.size} правил")
+println("v2fly PROXY: ${proxyDomainRules.size} входных правил")
+println("v2fly DIRECT: ${directDomainRules.size} входных правил")
+println("v2fly зарубежный DIRECT: ${directForeignRules.size} входных правил")
 println("DIRECT_IP.list: ${directIpRules.size} правил")
 println("Re-filter: ${reFilterDomains.size} доменов")
 println("Re-filter: исключено ${excludedPublicSuffixes.size} публичных зон ICANN")

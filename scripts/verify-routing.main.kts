@@ -310,7 +310,13 @@ fun decodeHappDomain(bytes: ByteArray, category: String): Rule {
     val domain = checkNotNull(value) { "Домен Happ без значения в $category" }
     check(domain.isNotBlank() && domain == domain.trim()) { "Некорректный домен Happ: $domain" }
     val policy = if (category == "ROUTING-PROXY") "PROXY" else "DIRECT"
-    return Rule(domainType, domain.lowercase(), policy, "happ/geosite.dat:$category")
+    return Rule(
+        domainType,
+        domain.lowercase(),
+        policy,
+        "happ/geosite.dat:$category",
+        encodedValue = domain
+    )
 }
 
 fun decodeHappGeosite(path: Path): Map<String, List<Rule>> {
@@ -424,13 +430,119 @@ data class Rule(
     val value: String,
     val policy: String,
     val source: String,
-    val noResolve: Boolean = false
+    val noResolve: Boolean = false,
+    val encodedValue: String = value
 )
 
 fun activeLines(path: Path): List<String> =
     Files.readAllLines(path)
         .map { it.trim() }
         .filter { it.isNotEmpty() && !it.startsWith("#") }
+
+fun verifyDomainRuleCoverage(before: List<String>, after: List<String>, context: String) {
+    check(before.isNotEmpty() && after.isNotEmpty()) { "$context: пустой набор доменных правил" }
+    val original = before.distinct()
+    original.forEach { line ->
+        val parts = line.split(',')
+        check(parts.size == 2 && parts[0] in setOf("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD") &&
+            parts[1].isNotBlank()) {
+            "$context: неизвестное исходное доменное правило: $line"
+        }
+    }
+    val retained = after.toSet()
+    check(retained.size == after.size) { "$context: после минимизации появились дубликаты" }
+
+    // Подпоследовательность запрещает добавление правил, замену типа и перестановку приоритетов.
+    var position = 0
+    after.forEach { line ->
+        while (position < original.size && original[position] != line) position++
+        check(position < original.size) { "$context: новое или переставленное правило: $line" }
+        position++
+    }
+    val suffixes =
+        after
+            .filter { it.startsWith("DOMAIN-SUFFIX,") }
+            .map { it.substringAfter(',') }
+            .toSet()
+    original.filterNot { it in retained }.forEach { line ->
+        val type = line.substringBefore(',')
+        check(type in setOf("DOMAIN", "DOMAIN-SUFFIX")) {
+            "$context: удалено правило без доказуемого DOMAIN-SUFFIX покрытия: $line"
+        }
+        var ancestor = line.substringAfter(',')
+        while (ancestor !in suffixes && '.' in ancestor) ancestor = ancestor.substringAfter('.')
+        check(ancestor in suffixes) { "$context: удалено непокрытое правило: $line" }
+    }
+}
+
+fun originalDomainRules(name: String): List<String> = activeLines(Path.of("build", "domain-rules", name))
+
+fun verifyDomainCoverageFixtures() {
+    verifyDomainRuleCoverage(
+        listOf(
+            "DOMAIN,exact.example",
+            "DOMAIN,api.example.com",
+            "DOMAIN-SUFFIX,deep.api.example.com",
+            "DOMAIN-SUFFIX,example.com",
+            "DOMAIN-SUFFIX,other.test",
+            "DOMAIN-KEYWORD,token"
+        ),
+        listOf(
+            "DOMAIN,exact.example",
+            "DOMAIN-SUFFIX,example.com",
+            "DOMAIN-SUFFIX,other.test",
+            "DOMAIN-KEYWORD,token"
+        ),
+        "Положительный контроль покрытия"
+    )
+    verifyDomainRuleCoverage(
+        listOf("DOMAIN,host.xn--p1ai", "DOMAIN-SUFFIX,xn--p1ai"),
+        listOf("DOMAIN-SUFFIX,xn--p1ai"),
+        "Контроль IDN-зоны"
+    )
+    listOf(0 to "ToKeN", 3 to "MiXeD.Example").forEach { (type, value) ->
+        val bytes = byteArrayOf(8, type.toByte(), 18, value.length.toByte()) + value.toByteArray(Charsets.UTF_8)
+        val decoded = decodeHappDomain(bytes, "ROUTING-PROXY")
+        check(decoded.value == value.lowercase() && decoded.encodedValue == value) {
+            "При декодировании потеряно исходное написание доменного правила"
+        }
+        val original = listOf("${decoded.type},$value")
+        verifyDomainRuleCoverage(
+            original,
+            listOf("${decoded.type},${decoded.encodedValue}"),
+            "Контроль исходного регистра Happ"
+        )
+        check(runCatching {
+            verifyDomainRuleCoverage(original, listOf("${decoded.type},${decoded.value}"), "Контроль смены регистра")
+        }.isFailure) {
+            "Проверка минимизации не обнаружила изменение регистра доменного правила"
+        }
+    }
+    val invalidChanges =
+        listOf(
+            listOf("DOMAIN,example.com") to listOf("DOMAIN-SUFFIX,example.com"),
+            listOf("DOMAIN-SUFFIX,example.com", "DOMAIN-SUFFIX,api.example.com") to
+                listOf("DOMAIN-SUFFIX,api.example.com"),
+            listOf("DOMAIN-SUFFIX,example.com", "DOMAIN,badexample.com") to
+                listOf("DOMAIN-SUFFIX,example.com"),
+            listOf("DOMAIN-SUFFIX,a.example.com", "DOMAIN-SUFFIX,b.example.com") to
+                listOf("DOMAIN-SUFFIX,a.example.com"),
+            listOf("DOMAIN-KEYWORD,token", "DOMAIN-SUFFIX,example.com") to
+                listOf("DOMAIN-SUFFIX,example.com"),
+            listOf("DOMAIN,example.com", "DOMAIN-SUFFIX,api.example.com") to listOf("DOMAIN,example.com"),
+            listOf("DOMAIN,token.example", "DOMAIN-KEYWORD,token") to listOf("DOMAIN-KEYWORD,token"),
+            listOf("DOMAIN-SUFFIX,example.com") to
+                listOf("DOMAIN-SUFFIX,example.com", "DOMAIN-SUFFIX,example.com"),
+            listOf("DOMAIN-SUFFIX,a.example", "DOMAIN-SUFFIX,b.example") to
+                listOf("DOMAIN-SUFFIX,b.example", "DOMAIN-SUFFIX,a.example"),
+            listOf("DOMAIN-SUFFIX,example.com") to emptyList()
+        )
+    invalidChanges.forEachIndexed { index, (before, after) ->
+        check(runCatching { verifyDomainRuleCoverage(before, after, "Отрицательный контроль $index") }.isFailure) {
+            "Принято изменение покрытия или порядка доменных правил: $index"
+        }
+    }
+}
 
 val referencedLocalLists = mutableListOf<String>()
 
@@ -640,6 +752,8 @@ fun matchedRule(rules: List<Rule>, target: String): Rule {
     } ?: error("Для $target не найдено правило маршрутизации")
 }
 
+verifyDomainCoverageFixtures()
+
 val rules = loadRules()
 val firstDomainIndex = rules.indexOfFirst { it.type.startsWith("DOMAIN") }
 val lastDomainIndex = rules.indexOfLast { it.type.startsWith("DOMAIN") }
@@ -668,6 +782,12 @@ val expectedLocalLists =
 check(referencedLocalLists == expectedLocalLists) {
     "Состав или порядок собственных списков изменился: $referencedLocalLists"
 }
+listOf("PROXY_DOMAIN.list", "DIRECT_DOMAIN.list", "DIRECT_FOREIGN_DOMAIN.list").forEach { name ->
+    val original = originalDomainRules(name)
+    val optimized = activeLines(Path.of("rules", name))
+    verifyDomainRuleCoverage(original, optimized, name)
+    println("$name: покрытие сохранено, ${original.size} → ${optimized.size} правил")
+}
 val firstOrderedSources =
     listOf(
         "rules/PROXY_DOMAIN.list",
@@ -695,10 +815,12 @@ fun verifyReFilterRuleSet(name: String, expected: List<String>) {
     check(header == "# Source commit: $reFilterCommit") {
         "$path: SHA источника не совпадает с SOURCE_MANIFEST.txt"
     }
-    check(expected.isNotEmpty() && activeLines(path) == expected) {
-        "$path: содержимое отличается от проверенного входа Re-filter"
+    check(originalDomainRules(name) == expected) {
+        "$path: исходные правила минимизации отличаются от проверенного входа Re-filter"
     }
-    println("$path: ${expected.size} проверенных DOMAIN-SUFFIX правил")
+    val optimized = activeLines(path)
+    verifyDomainRuleCoverage(expected, optimized, path.toString())
+    println("$path: покрытие Re-filter сохранено, ${expected.size} → ${optimized.size} правил")
 }
 val icannSuffixes = loadIcannPublicSuffixes(Path.of("data/public_suffix_list.dat"))
 val publicSuffixFixture =
@@ -972,6 +1094,12 @@ fun verifyHapp() {
 
     val geosite = decodeHappGeosite(Path.of("happ/geosite.dat"))
     val geoip = decodeHappGeoip(Path.of("happ/geoip.dat"))
+    geosite.forEach { (category, decoded) ->
+        val original = originalDomainRules("$category.list")
+        val optimized = decoded.map { rule -> "${rule.type},${rule.encodedValue}" }
+        verifyDomainRuleCoverage(original, optimized, "Happ $category")
+        println("Happ $category: покрытие сохранено, ${original.size} → ${optimized.size} правил")
+    }
     check("4pda.ru" in communityDomains) { "4pda.ru отсутствует в community.lst" }
     val proxyRules = checkNotNull(geosite["ROUTING-PROXY"]) + happDomainRules(proxySites, "ProxySites", "PROXY")
     val directRules = checkNotNull(geosite["ROUTING-DIRECT"]) + happDomainRules(directSites, "DirectSites", "DIRECT")
