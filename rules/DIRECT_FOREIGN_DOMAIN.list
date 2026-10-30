@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: cc00e229ed5941aa56b2a8e9b54be81907258214
+# Source commit: 1daade8c4bb957d21d1f5c09c2b050d699e8e96c
 DOMAIN,a4e8s8k3.map2.ssl.hwcdn.net
 DOMAIN,apple-tv-plus-press.apple.com
 DOMAIN,apple.com.akadns.net
@@ -855,6 +855,7 @@ DOMAIN-SUFFIX,bingapis.com
 DOMAIN-SUFFIX,bingapistatistics.com
 DOMAIN-SUFFIX,bingparachute.com
 DOMAIN-SUFFIX,bingsandbox.com
+DOMAIN-SUFFIX,bingstatic.com
 DOMAIN-SUFFIX,bingvisualsearch.com
 DOMAIN-SUFFIX,bingworld.com
 DOMAIN-SUFFIX,blackfridaydrebeatsnew.com
@@ -1814,6 +1815,7 @@ DOMAIN-SUFFIX,msftconnecttest.com
 DOMAIN-SUFFIX,msfteducation.ca
 DOMAIN-SUFFIX,msftncsi.com
 DOMAIN-SUFFIX,msftnet.org
+DOMAIN-SUFFIX,msftstatic.com
 DOMAIN-SUFFIX,msgamesresearch.com
 DOMAIN-SUFFIX,msgamestudios.com
 DOMAIN-SUFFIX,mshome.net

@@ -42,5 +42,5 @@
   "BlockIp": [],
   "DomainStrategy": "IPIfNonMatch",
   "FakeDNS": "true",
-  "LastUpdated": "1793348642"
+  "LastUpdated": "1793381928"
 }
