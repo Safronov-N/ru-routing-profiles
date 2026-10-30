@@ -963,7 +963,7 @@ val happFields =
         "BlockSites" to jsonStrings(emptyList()),
         "BlockIp" to jsonStrings(emptyList()),
         "DomainStrategy" to JsonStringValue("IPIfNonMatch"),
-        "FakeDNS" to JsonStringValue("false")
+        "FakeDNS" to JsonStringValue("true")
     )
 val previousHappPath = Path.of("happ/happ-routing.json")
 val previousHapp =

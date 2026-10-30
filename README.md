@@ -80,7 +80,7 @@ Re-filter поставляет кандидатов на проксирован�
 
 Shadowrocket использует `tls://common.dot.dns.yandex.net`, fallback `https://dns.google/dns-query#proxy`, `https://cloudflare-dns.com/dns-query#proxy` и `system`. `dns-direct-fallback-proxy = false` не переводит DIRECT DNS на proxy fallback; `private-ip-answer = true` допускает private DNS-ответы для локальных сетей. Массовый `always-real-ip` из прежнего профиля не используется.
 
-Happ сохраняет DNS-серверы и DoH-поля ранее проверенного пользователем профиля: удалённый `8.8.8.8`, прямой `77.88.8.8`. Прежние фиксированные адреса `nalog.ru` в `DnsHosts` удалены: 27 октября 2026 года прямой DNS возвращал для `lkfl2.nalog.ru` два IP, а старая запись закрепляла только один. Сходство маршрутов Shadowrocket и Happ не означает идентичность их DNS-поведения. Конфиг не настраивает split-DNS для частных зон другой VPN.
+Happ сохраняет DNS-серверы и DoH-поля ранее проверенного пользователем профиля: удалённый `8.8.8.8`, прямой `77.88.8.8`. В профиле Happ по умолчанию включён FakeDNS (`FakeDNS=true`). Прежние фиксированные адреса `nalog.ru` в `DnsHosts` удалены: 27 октября 2026 года прямой DNS возвращал для `lkfl2.nalog.ru` два IP, а старая запись закрепляла только один. Сходство маршрутов Shadowrocket и Happ не означает идентичность их DNS-поведения. Конфиг не настраивает split-DNS для частных зон другой VPN.
 
 ## Проверка и разработка
 

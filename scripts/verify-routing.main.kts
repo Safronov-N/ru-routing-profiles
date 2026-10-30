@@ -751,7 +751,7 @@ fun verifyHapp() {
             "DomesticDNSType" to "DoH",
             "DomesticDNSDomain" to "https://77.88.8.8/dns-query",
             "DomesticDNSIP" to "77.88.8.8",
-            "FakeDNS" to "false",
+            "FakeDNS" to "true",
             "Geoipurl" to
                 "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/happ/geoip.dat",
             "Geositeurl" to
