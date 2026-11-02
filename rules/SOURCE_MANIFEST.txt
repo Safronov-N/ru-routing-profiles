@@ -1,13 +1,13 @@
 # Снимки независимых источников маршрутизации
 source_profile=independent-v1
 domain_rule_minimization=suffix-coverage-v1
-v2fly_commit=01add61fbaf719b55673d969615cd328e80f214c
-v2fly_category_ru_updated_at=2026-10-22T03:21:18Z
+v2fly_commit=f9486122931b6fc7d8733731ea58caef4ad33936
+v2fly_category_ru_updated_at=2026-11-02T13:00:24Z
 v2fly_proxy_categories=youtube,telegram,github,instagram,discord,google-play,openai
 v2fly_proxy_rules=385
 manual_proxy_rules=1
 proxy_rules_total=386
-v2fly_direct_rules=1866
+v2fly_direct_rules=1867
 v2fly_foreign_direct_categories=microsoft,apple,epicgames,riot,escapefromtarkov,steam,twitch,pinterest,faceit
 v2fly_foreign_direct_rules=2295
 manual_foreign_direct_rules=1
@@ -26,8 +26,8 @@ refilter_community_national_kept=14
 refilter_broad_foreign_rules=58841
 refilter_community_rules=689
 refilter_proxy_rules=58855
-ru_geoip_commit=33824131927ddbc19c540f2a301cc4ef4e123478
-ru_geoip_updated_at=2026-10-29T00:23:08Z
+ru_geoip_commit=6232c9528e724aeb626fd44a908afabf695e5ea7
+ru_geoip_updated_at=2026-11-02T21:37:59Z
 ru_geoip_ranges=25157
 domains_all.lst=82057
 community.lst=713

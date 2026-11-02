@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: 01add61fbaf719b55673d969615cd328e80f214c
+# Source commit: f9486122931b6fc7d8733731ea58caef4ad33936
 DOMAIN,kp-config-smart-tv.akamaized.net
 DOMAIN,kp-configs-smart-tv.s3.eu-central-1.amazonaws.com
 DOMAIN,mvideo.edna.io
@@ -856,5 +856,6 @@ DOMAIN-SUFFIX,ydb.tech
 DOMAIN-SUFFIX,yndx.net
 DOMAIN-SUFFIX,youla.io
 DOMAIN-SUFFIX,yourgood.app
+DOMAIN-SUFFIX,zapishu.me
 DOMAIN-SUFFIX,zvuk-b2b.com
 DOMAIN-SUFFIX,zvuk.com

@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: 33824131927ddbc19c540f2a301cc4ef4e123478
+# Source commit: 6232c9528e724aeb626fd44a908afabf695e5ea7
 IP-CIDR,10.0.0.0/8
 IP-CIDR,100.64.0.0/10
 IP-CIDR,101.79.213.0/24
