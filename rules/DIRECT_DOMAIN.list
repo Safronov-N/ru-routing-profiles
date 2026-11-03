@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: f9486122931b6fc7d8733731ea58caef4ad33936
+# Source commit: 476b009f4d0176426958b3fdadf87f2a2688baa5
 DOMAIN,kp-config-smart-tv.akamaized.net
 DOMAIN,kp-configs-smart-tv.s3.eu-central-1.amazonaws.com
 DOMAIN,mvideo.edna.io
@@ -58,6 +58,7 @@ DOMAIN-SUFFIX,beget.app
 DOMAIN-SUFFIX,beget.cloud
 DOMAIN-SUFFIX,beget.com
 DOMAIN-SUFFIX,beget.de
+DOMAIN-SUFFIX,beget.email
 DOMAIN-SUFFIX,beget.hosting
 DOMAIN-SUFFIX,beget.pro
 DOMAIN-SUFFIX,beget.tech

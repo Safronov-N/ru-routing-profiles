@@ -1,13 +1,13 @@
 # Снимки независимых источников маршрутизации
 source_profile=independent-v1
 domain_rule_minimization=suffix-coverage-v1
-v2fly_commit=f9486122931b6fc7d8733731ea58caef4ad33936
+v2fly_commit=476b009f4d0176426958b3fdadf87f2a2688baa5
 v2fly_category_ru_updated_at=2026-11-02T13:00:24Z
 v2fly_proxy_categories=youtube,telegram,github,instagram,discord,google-play,openai
 v2fly_proxy_rules=385
 manual_proxy_rules=1
 proxy_rules_total=386
-v2fly_direct_rules=1867
+v2fly_direct_rules=1868
 v2fly_foreign_direct_categories=microsoft,apple,epicgames,riot,escapefromtarkov,steam,twitch,pinterest,faceit
 v2fly_foreign_direct_rules=2295
 manual_foreign_direct_rules=1
