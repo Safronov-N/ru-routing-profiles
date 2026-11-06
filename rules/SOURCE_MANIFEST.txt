@@ -1,7 +1,7 @@
 # Снимки независимых источников маршрутизации
 source_profile=independent-v1
 domain_rule_minimization=suffix-coverage-v1
-v2fly_commit=3895d9a3a76de2c1598a10c5fefc38e3481117fa
+v2fly_commit=de2d7d9f283911f2e24668893ae3d87e1008aecc
 v2fly_category_ru_updated_at=2026-11-03T22:30:21Z
 v2fly_proxy_categories=youtube,telegram,github,instagram,discord,google-play,openai
 v2fly_proxy_rules=385
