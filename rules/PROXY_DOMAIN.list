@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: 6d14992a24e63dc9494334cc6711de363b0705c3
+# Source commit: 1d1049b54971c86c9a3a5467d238a6a2ad7baf46
 DOMAIN,copilotprodattachments.blob.core.windows.net
 DOMAIN,discord-attachments-uploads-prd.storage.googleapis.com
 DOMAIN,github-api.arkoselabs.com
@@ -15,6 +15,7 @@ DOMAIN,openaiassets.blob.core.windows.net
 DOMAIN,openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net
 DOMAIN,openaicom.imgix.net
 DOMAIN,openaicomproductionae4b.blob.core.windows.net
+DOMAIN,production-copilot-host-westus.webpubsub.azure.com
 DOMAIN,production-openaicom-storage.azureedge.net
 DOMAIN,productionresultssa0.blob.core.windows.net
 DOMAIN,productionresultssa1.blob.core.windows.net
