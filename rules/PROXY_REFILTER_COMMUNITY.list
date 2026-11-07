@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: 08fede1134fed28029993dbbaf99f4dfd6b4665f
+# Source commit: 6303540b78a81fe3395459ac822822136f0b4095
 DOMAIN-SUFFIX,4pda.ru
 DOMAIN-SUFFIX,4pda.to
 DOMAIN-SUFFIX,a360.co
@@ -33,6 +33,7 @@ DOMAIN-SUFFIX,alberta.ca
 DOMAIN-SUFFIX,amiibo.com
 DOMAIN-SUFFIX,anilibria.tv
 DOMAIN-SUFFIX,antizapret.prostovpn.org
+DOMAIN-SUFFIX,api-dashboard.search.brave.com
 DOMAIN-SUFFIX,api.app.prod.grazie.aws.intellij.net
 DOMAIN-SUFFIX,api.github.com
 DOMAIN-SUFFIX,api.home-connect.com
