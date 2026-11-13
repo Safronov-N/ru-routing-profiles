@@ -1,71 +1,97 @@
-# Сгенерировано из shadowrocket.template.conf.
-name: Independent RU Routing
-desc: Правила ru-routing-profiles для подписки с группой PROXY.
+# Сгенерировано из shadowrocket.conf и rules/*.list; не редактировать вручную.
+name: 'Independent RU Routing'
+desc: 'Маршрутизация для РФ. Выберите свой VPN-сервер в группе RU-PROXY.'
 mode: rule
+
+# Группа использует серверы и провайдеров действующей подписки.
+# До подключения выберите рабочий сервер; пустая подписка не поддерживается.
+proxy-groups:
+  - name: RU-PROXY
+    type: select
+    include-all: true
 
 rule-providers:
   ru-proxy-domain:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/PROXY_DOMAIN.list
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/proxy-domain.yaml
+    path: ./rule-providers/ru-proxy-domain.yaml
     interval: 21600
   ru-direct-priority-domain:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_PRIORITY_DOMAIN.list
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/direct-priority-domain.yaml
+    path: ./rule-providers/ru-direct-priority-domain.yaml
     interval: 21600
   ru-proxy-refilter-community:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/PROXY_REFILTER_COMMUNITY.list
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/proxy-refilter-community.yaml
+    path: ./rule-providers/ru-proxy-refilter-community.yaml
     interval: 21600
   ru-proxy-refilter-domain:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/PROXY_REFILTER_DOMAIN.list
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/proxy-refilter-domain.yaml
+    path: ./rule-providers/ru-proxy-refilter-domain.yaml
     interval: 21600
   ru-direct-domain:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_DOMAIN.list
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/direct-domain.yaml
+    path: ./rule-providers/ru-direct-domain.yaml
     interval: 21600
   ru-direct-foreign-domain:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_FOREIGN_DOMAIN.list
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/direct-foreign-domain.yaml
+    path: ./rule-providers/ru-direct-foreign-domain.yaml
     interval: 21600
   ru-direct-ip:
-    behavior: classical
-    format: text
-    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_IP.list
+    type: http
+    behavior: ipcidr
+    format: yaml
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules/direct-ip.yaml
+    path: ./rule-providers/ru-direct-ip.yaml
     interval: 21600
 
+# Замена исключает перехват трафика прежними правилами подписки.
 rules: #!replace
-  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
-  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
-  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
-  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
-  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
-  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
-  - DOMAIN-SUFFIX,2ip.ru,PROXY
-  - DOMAIN-SUFFIX,2ip.io,PROXY
-  - DOMAIN-SUFFIX,ipify.org,PROXY
-  - DOMAIN-SUFFIX,ifconfig.me,PROXY
-  - DOMAIN-SUFFIX,ip.sb,PROXY
-  - DOMAIN-SUFFIX,checkip.amazonaws.com,PROXY
-  - DOMAIN-SUFFIX,ipapi.is,PROXY
-  - DOMAIN-SUFFIX,iplocate.io,PROXY
-  - DOMAIN-SUFFIX,showip.net,PROXY
-  - RULE-SET,ru-proxy-domain,PROXY
-  - RULE-SET,ru-direct-priority-domain,DIRECT
-  - RULE-SET,ru-proxy-refilter-community,PROXY
-  - DOMAIN-SUFFIX,ru,DIRECT
-  - DOMAIN-SUFFIX,xn--p1ai,DIRECT
-  - DOMAIN-SUFFIX,su,DIRECT
-  - DOMAIN-SUFFIX,by,DIRECT
-  - RULE-SET,ru-proxy-refilter-domain,PROXY
-  - RULE-SET,ru-direct-domain,DIRECT
-  - RULE-SET,ru-direct-foreign-domain,DIRECT
-  - RULE-SET,ru-direct-ip,DIRECT
-  - GEOIP,RU,DIRECT
-  - MATCH,PROXY
+  - 'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve'
+  - 'IP-CIDR,100.64.0.0/10,DIRECT,no-resolve'
+  - 'IP-CIDR,127.0.0.0/8,DIRECT,no-resolve'
+  - 'IP-CIDR,169.254.0.0/16,DIRECT,no-resolve'
+  - 'IP-CIDR,172.16.0.0/12,DIRECT,no-resolve'
+  - 'IP-CIDR,192.168.0.0/16,DIRECT,no-resolve'
+  - 'IP-CIDR6,::1/128,DIRECT,no-resolve'
+  - 'IP-CIDR6,fc00::/7,DIRECT,no-resolve'
+  - 'IP-CIDR6,fe80::/10,DIRECT,no-resolve'
+  - 'DOMAIN-SUFFIX,2ip.ru,RU-PROXY'
+  - 'DOMAIN-SUFFIX,2ip.io,RU-PROXY'
+  - 'DOMAIN-SUFFIX,ipify.org,RU-PROXY'
+  - 'DOMAIN-SUFFIX,ifconfig.me,RU-PROXY'
+  - 'DOMAIN-SUFFIX,ip.sb,RU-PROXY'
+  - 'DOMAIN-SUFFIX,checkip.amazonaws.com,RU-PROXY'
+  - 'DOMAIN-SUFFIX,ipapi.is,RU-PROXY'
+  - 'DOMAIN-SUFFIX,iplocate.io,RU-PROXY'
+  - 'DOMAIN-SUFFIX,showip.net,RU-PROXY'
+  - 'DOMAIN-WILDCARD,chatgpt-async-webps-prod-*-*.webpubsub.azure.com,RU-PROXY'
+  - 'RULE-SET,ru-proxy-domain,RU-PROXY'
+  - 'RULE-SET,ru-direct-priority-domain,DIRECT'
+  - 'RULE-SET,ru-proxy-refilter-community,RU-PROXY'
+  - 'DOMAIN-SUFFIX,ru,DIRECT'
+  - 'DOMAIN-SUFFIX,xn--p1ai,DIRECT'
+  - 'DOMAIN-SUFFIX,su,DIRECT'
+  - 'DOMAIN-SUFFIX,by,DIRECT'
+  - 'RULE-SET,ru-proxy-refilter-domain,RU-PROXY'
+  - 'RULE-SET,ru-direct-domain,DIRECT'
+  - 'RULE-SET,ru-direct-foreign-domain,DIRECT'
+  - 'RULE-SET,ru-direct-ip,DIRECT'
+  - 'GEOIP,RU,DIRECT'
+  - 'MATCH,RU-PROXY'

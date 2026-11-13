@@ -33,6 +33,16 @@ DOMAIN,dgeft87wbj63p.cloudfront.net
 DOMAIN,dqrpb9wgowsf5.cloudfront.net
 DOMAIN,ds0h3roq6wcgc.cloudfront.net
 DOMAIN,dykkng5hnh52u.cloudfront.net
+DOMAIN,epicgames-download0.akamaized.net
+DOMAIN,epicgames-download1.akamaized.net
+DOMAIN,epicgames-download2.akamaized.net
+DOMAIN,epicgames-download3.akamaized.net
+DOMAIN,epicgames-download4.akamaized.net
+DOMAIN,epicgames-download5.akamaized.net
+DOMAIN,epicgames-download6.akamaized.net
+DOMAIN,epicgames-download7.akamaized.net
+DOMAIN,epicgames-download8.akamaized.net
+DOMAIN,epicgames-download9.akamaized.net
 DOMAIN,f3b7q2p3.ssl.hwcdn.net
 DOMAIN,github-api.arkoselabs.com
 DOMAIN,github-cloud.s3.amazonaws.com
@@ -68,7 +78,6 @@ DOMAIN,steamuserimages-a.akamaihd.net
 DOMAIN,steamvideo-a.akamaihd.net
 DOMAIN,vsmarketplacebadge.apphb.com
 DOMAIN,www-cdn.icloud.com.akadns.net
-DOMAIN-KEYWORD,epicgames-download
 DOMAIN-SUFFIX,100beatscheap.com
 DOMAIN-SUFFIX,12diasdepresentesdeitunes.com
 DOMAIN-SUFFIX,12diasderegalosdeitunes.cl
