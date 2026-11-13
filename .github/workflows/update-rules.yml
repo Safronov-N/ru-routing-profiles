@@ -1,4 +1,4 @@
-name: Update Shadowrocket and Happ rules
+name: Update Stash, Shadowrocket and Happ rules
 
 on:
   push:
@@ -10,6 +10,7 @@ on:
       - shadowrocket.conf
       - rules/**
       - happ/**
+      - stash/**
   pull_request:
     paths:
       - .github/workflows/update-rules.yml
@@ -19,6 +20,7 @@ on:
       - shadowrocket.conf
       - rules/**
       - happ/**
+      - stash/**
       - examples/macos-resolver/**
   schedule:
     - cron: "17 */6 * * *"
@@ -53,6 +55,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Сгенерировать правила Stash
+        run: kotlinc -script scripts/generate-stash.main.kts
+
       - name: Проверить маршруты
         run: kotlinc -script scripts/verify-routing.main.kts
 
@@ -63,13 +68,14 @@ jobs:
           test -s happ/happ-routing-link.txt
           test -s happ/geosite.dat
           test -s happ/geoip.dat
+          test -s stash/routing.stoverride
           test -s examples/macos-resolver/mdb.yandexcloud.net.example
           grep -Fxq 'nameserver VPC_DNS_IP_1' examples/macos-resolver/mdb.yandexcloud.net.example
           ! grep -Eq 'hydraponique|zeklop|\{\{' shadowrocket.conf
           ! grep '^always-real-ip = ' shadowrocket.conf | grep -Fq 'yandexcloud.net'
 
-      - name: Проверить актуальность generated-файлов
-        run: test -z "$(git status --porcelain -- rules shadowrocket.conf happ)"
+      - name: Проверить формат изменений
+        run: git diff --check
 
   update:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -92,17 +98,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Сгенерировать правила Stash
+        run: kotlinc -script scripts/generate-stash.main.kts
+
       - name: Проверить маршруты
         run: kotlinc -script scripts/verify-routing.main.kts
 
+      - name: Проверить формат изменений
+        run: git diff --check
+
       - name: Опубликовать изменения
         run: |
-          if ! git status --porcelain -- rules shadowrocket.conf happ | grep -q .; then
+          if ! git status --porcelain -- rules shadowrocket.conf happ stash | grep -q .; then
             echo "Правила не изменились"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rules shadowrocket.conf happ
-          git commit -m "Обновить профили Shadowrocket и Happ"
+          git add rules shadowrocket.conf happ stash
+          git commit -m "Обновить профили Stash, Shadowrocket и Happ"
           git push

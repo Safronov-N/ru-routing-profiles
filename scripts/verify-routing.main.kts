@@ -303,16 +303,18 @@ fun decodeHappDomain(bytes: ByteArray, category: String): Rule {
     val domainType =
         when (type) {
             0 -> "DOMAIN-KEYWORD"
+            1 -> "DOMAIN-REGEX"
             2 -> "DOMAIN-SUFFIX"
             3 -> "DOMAIN"
             else -> error("Неподдерживаемый тип домена Happ: $type")
         }
     val domain = checkNotNull(value) { "Домен Happ без значения в $category" }
     check(domain.isNotBlank() && domain == domain.trim()) { "Некорректный домен Happ: $domain" }
+    if (domainType == "DOMAIN-REGEX") Regex(domain)
     val policy = if (category == "ROUTING-PROXY") "PROXY" else "DIRECT"
     return Rule(
         domainType,
-        domain.lowercase(),
+        if (domainType == "DOMAIN-REGEX") domain else domain.lowercase(),
         policy,
         "happ/geosite.dat:$category",
         encodedValue = domain
@@ -444,7 +446,8 @@ fun verifyDomainRuleCoverage(before: List<String>, after: List<String>, context:
     val original = before.distinct()
     original.forEach { line ->
         val parts = line.split(',')
-        check(parts.size == 2 && parts[0] in setOf("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD") &&
+        check(parts.size == 2 &&
+            parts[0] in setOf("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD", "DOMAIN-REGEX") &&
             parts[1].isNotBlank()) {
             "$context: неизвестное исходное доменное правило: $line"
         }
@@ -485,13 +488,15 @@ fun verifyDomainCoverageFixtures() {
             "DOMAIN-SUFFIX,deep.api.example.com",
             "DOMAIN-SUFFIX,example.com",
             "DOMAIN-SUFFIX,other.test",
-            "DOMAIN-KEYWORD,token"
+            "DOMAIN-KEYWORD,token",
+            "DOMAIN-WILDCARD,service-*.example"
         ),
         listOf(
             "DOMAIN,exact.example",
             "DOMAIN-SUFFIX,example.com",
             "DOMAIN-SUFFIX,other.test",
-            "DOMAIN-KEYWORD,token"
+            "DOMAIN-KEYWORD,token",
+            "DOMAIN-WILDCARD,service-*.example"
         ),
         "Положительный контроль покрытия"
     )
@@ -518,6 +523,23 @@ fun verifyDomainCoverageFixtures() {
             "Проверка минимизации не обнаружила изменение регистра доменного правила"
         }
     }
+    val wildcard = "chatgpt-async-webps-prod-*-*.webpubsub.azure.com"
+    val encodedRegex = wildcardDomainRegex(wildcard)
+    check(encodedRegex == "^chatgpt-async-webps-prod-.*-.*\\.webpubsub\\.azure\\.com$") {
+        "Wildcard Happ преобразован в неожиданное регулярное выражение"
+    }
+    val regexBytes = byteArrayOf(8, 1, 18, encodedRegex.length.toByte()) + encodedRegex.toByteArray(Charsets.UTF_8)
+    val regexRule = decodeHappDomain(regexBytes, "ROUTING-PROXY")
+    listOf(
+        "chatgpt-async-webps-prod-demo-123.webpubsub.azure.com" to true,
+        "chatgpt-async-webps-prod-example.nalog.ru" to false,
+        "chatgpt-async-webps-prod-demo-123.webpubsub.azure.com.evil.example" to false,
+        "not-chatgpt-async-webps-prod-demo-123.webpubsub.azure.com" to false
+    ).forEach { (domain, expected) ->
+        check(wildcardMatches(wildcard, domain) == expected && matchesDomain(regexRule, domain) == expected) {
+            "Wildcard Shadowrocket и regexp Happ расходятся для $domain"
+        }
+    }
     val invalidChanges =
         listOf(
             listOf("DOMAIN,example.com") to listOf("DOMAIN-SUFFIX,example.com"),
@@ -528,6 +550,10 @@ fun verifyDomainCoverageFixtures() {
             listOf("DOMAIN-SUFFIX,a.example.com", "DOMAIN-SUFFIX,b.example.com") to
                 listOf("DOMAIN-SUFFIX,a.example.com"),
             listOf("DOMAIN-KEYWORD,token", "DOMAIN-SUFFIX,example.com") to
+                listOf("DOMAIN-SUFFIX,example.com"),
+            listOf("DOMAIN-WILDCARD,service-*.example", "DOMAIN-SUFFIX,example.com") to
+                listOf("DOMAIN-SUFFIX,example.com"),
+            listOf("DOMAIN-REGEX,^service-.*\\.example$", "DOMAIN-SUFFIX,example.com") to
                 listOf("DOMAIN-SUFFIX,example.com"),
             listOf("DOMAIN,example.com", "DOMAIN-SUFFIX,api.example.com") to listOf("DOMAIN,example.com"),
             listOf("DOMAIN,token.example", "DOMAIN-KEYWORD,token") to listOf("DOMAIN-KEYWORD,token"),
@@ -671,65 +697,25 @@ fun loadRules(): List<Rule> {
     return rules
 }
 
-fun verifyStashOverride() {
-    val path = Path.of("rules", "Independent-RU-Routing.stoverride")
-    val lines = activeLines(path)
-    val rulesHeader = lines.indexOf("rules: #!replace")
-    val providersHeader = lines.indexOf("rule-providers:")
-    check(providersHeader >= 0 && rulesHeader > providersHeader && "mode: rule" in lines) {
-        "$path: отсутствуют списки, режим по правилам или директива замены правил"
+fun wildcardDomainRegex(pattern: String): String {
+    require(pattern.all { it in 'a'..'z' || it in '0'..'9' || it in ".-_*?" }) {
+        "Неподдерживаемый символ доменного wildcard: $pattern"
     }
-    val providerLines = lines.subList(providersHeader + 1, rulesHeader)
-    val providers = linkedMapOf<String, String>()
-    providerLines.chunked(5).forEach { block ->
-        check(
-            block.size == 5 && block[0].matches(Regex("ru-[a-z0-9-]+:")) &&
-                block[1] == "behavior: classical" && block[2] == "format: text" &&
-                block[3].startsWith("url: ") && block[4] == "interval: 21600"
-        ) { "$path: некорректный поставщик правил: $block" }
-        val name = block[0].removeSuffix(":")
-        check(providers.put(name, block[3].removePrefix("url: ")) == null) {
-            "$path: повторный поставщик правил $name"
-        }
-    }
-    check(lines.lastOrNull() == "- MATCH,PROXY") { "$path: ожидалось финальное правило MATCH,PROXY" }
-    val usedProviders = mutableSetOf<String>()
-    val stashRules = lines.drop(rulesHeader + 1).map { line ->
-        check(line.startsWith("- ")) { "$path: некорректная строка правил: $line" }
-        val rule = line.removePrefix("- ")
-        when {
-            rule.startsWith("RULE-SET,") -> {
-                val parts = rule.split(',')
-                check(parts.size == 3) { "$path: некорректный RULE-SET: $rule" }
-                usedProviders.add(parts[1])
-                "RULE-SET,${providers.getValue(parts[1])},${parts[2]}"
-            }
-            rule == "MATCH,PROXY" -> "FINAL,PROXY"
-            else -> rule
-        }
-    }
-    check(usedProviders == providers.keys) { "$path: есть неиспользуемые поставщики правил" }
-    val shadowrocketRules = activeLines(Path.of("shadowrocket.conf")).dropWhile { it != "[Rule]" }.drop(1)
-    check(stashRules.isNotEmpty() && stashRules == shadowrocketRules) {
-        "$path: правила или их порядок отличаются от Shadowrocket"
-    }
-    println("$path: ${stashRules.size} правил и ${providers.size} списков совпадают с Shadowrocket")
-}
-
-fun wildcardMatches(pattern: String, domain: String): Boolean {
-    val regex = buildString {
+    return buildString {
         append('^')
         pattern.forEach { character ->
             when (character) {
                 '*' -> append(".*")
                 '?' -> append('.')
-                else -> append(Regex.escape(character.toString()))
+                '.' -> append("\\.")
+                else -> append(character)
             }
         }
         append('$')
     }
-    return Regex(regex).matches(domain)
 }
+
+fun wildcardMatches(pattern: String, domain: String): Boolean = Regex(wildcardDomainRegex(pattern)).matches(domain)
 
 fun matchesDomain(rule: Rule, domain: String): Boolean =
     when (rule.type) {
@@ -737,6 +723,7 @@ fun matchesDomain(rule: Rule, domain: String): Boolean =
         "DOMAIN-SUFFIX" -> domain == rule.value || domain.endsWith(".${rule.value}")
         "DOMAIN-KEYWORD" -> rule.value in domain
         "DOMAIN-WILDCARD" -> wildcardMatches(rule.value, domain)
+        "DOMAIN-REGEX" -> Regex(rule.value).containsMatchIn(domain)
         "FINAL" -> true
         else -> false
     }
@@ -800,7 +787,6 @@ fun matchedRule(rules: List<Rule>, target: String): Rule {
 verifyDomainCoverageFixtures()
 
 val rules = loadRules()
-verifyStashOverride()
 val firstDomainIndex = rules.indexOfFirst { it.type.startsWith("DOMAIN") }
 val lastDomainIndex = rules.indexOfLast { it.type.startsWith("DOMAIN") }
 val firstResolvingIpIndex = rules.indexOfFirst {
@@ -980,10 +966,20 @@ val foreignDirectCanaries =
         "steamcommunity.com",
         "twitch.tv",
         "pinterest.com",
-        "faceit.com",
-        "epicgames-download1.akamaized.net"
-    )
+        "faceit.com"
+    ) + (0..9).map { number -> "epicgames-download$number.akamaized.net" }
 val dynamicOpenaiCanary = "chatgpt-async-webps-prod-demo-123.webpubsub.azure.com"
+val priorityOpenaiLookalike = "chatgpt-async-webps-prod-example.nalog.ru"
+val finalProxyCanaries =
+    listOf(
+        "unlisted-routing-check.example",
+        "epicgames-download.evil.example",
+        "notepicgames-download9.example",
+        "epicgames-download1.akamaized.net.evil.example",
+        "epicgames-download10.akamaized.net",
+        "sub.epicgames-download1.akamaized.net",
+        "chatgpt-async-webps-prod-demo-123.webpubsub.azure.com.evil.example"
+    )
 
 // Псевдодомен проверяет FINAL без DNS и последующей IP-фазы.
 val expectations =
@@ -1006,6 +1002,7 @@ val expectations =
         "gosuslugi.ru" to "DIRECT",
         "nalog.ru" to "DIRECT",
         "lkfl2.nalog.ru" to "DIRECT",
+        priorityOpenaiLookalike to "DIRECT",
         "ozon.ru" to "DIRECT",
         "api.ozon.ru" to "DIRECT",
         "netmonet.co" to "DIRECT",
@@ -1013,19 +1010,19 @@ val expectations =
         "politis.com.cy" to "PROXY",
         "213.24.64.175" to "DIRECT",
         "10.1.2.3" to "DIRECT",
-        "127.0.0.1" to "DIRECT",
-        "unlisted-routing-check.example" to "PROXY"
+        "127.0.0.1" to "DIRECT"
     )
 foreignDirectCanaries.forEach { domain -> expectations[domain] = "DIRECT" }
+finalProxyCanaries.forEach { domain -> expectations[domain] = "PROXY" }
 expectations.forEach { (target, expected) ->
     val actual = matchedRule(rules, target)
-    if (ipv4Value(target) == null && target != "unlisted-routing-check.example") {
+    if (ipv4Value(target) == null && target !in finalProxyCanaries) {
         check(actual.type != "FINAL") {
             "$target маршрутизирован по FINAL без явного доменного правила"
         }
     }
-    if (target == "unlisted-routing-check.example") {
-        check(actual.type == "FINAL") { "Неизвестный домен должен попадать в FINAL" }
+    if (target in finalProxyCanaries) {
+        check(actual.type == "FINAL") { "$target должен попадать в FINAL без слишком широкого правила" }
     }
     check(actual.policy == expected) {
         "$target: ожидался $expected, получен ${actual.policy} " +
@@ -1141,7 +1138,13 @@ fun verifyHapp() {
     val geosite = decodeHappGeosite(Path.of("happ/geosite.dat"))
     val geoip = decodeHappGeoip(Path.of("happ/geoip.dat"))
     geosite.forEach { (category, decoded) ->
-        val original = originalDomainRules("$category.list")
+        val original = originalDomainRules("$category.list").map { rule ->
+            if (rule.startsWith("DOMAIN-WILDCARD,")) {
+                "DOMAIN-REGEX,${wildcardDomainRegex(rule.substringAfter(','))}"
+            } else {
+                rule
+            }
+        }
         val optimized = decoded.map { rule -> "${rule.type},${rule.encodedValue}" }
         verifyDomainRuleCoverage(original, optimized, "Happ $category")
         println("Happ $category: покрытие сохранено, ${original.size} → ${optimized.size} правил")
@@ -1181,6 +1184,7 @@ fun verifyHapp() {
             "gosuslugi.ru" to "DIRECT",
             "nalog.ru" to "DIRECT",
             "lkfl2.nalog.ru" to "DIRECT",
+            priorityOpenaiLookalike to "DIRECT",
             "ozon.ru" to "DIRECT",
             "api.ozon.ru" to "DIRECT",
             "netmonet.co" to "DIRECT",
@@ -1197,6 +1201,12 @@ fun verifyHapp() {
             "Happ $domain: ожидалось $expected, получено ${matched.policy} (${matched.source})"
         }
         println("Happ $domain → $expected (${matched.source})")
+    }
+    finalProxyCanaries.forEach { domain ->
+        check((proxyRules + directRules).none { matchesDomain(it, domain) }) {
+            "Happ $domain перехвачен слишком широким доменным правилом"
+        }
+        println("Happ $domain → PROXY (GlobalProxy)")
     }
 
     val ipExpectations =
@@ -1219,7 +1229,264 @@ fun verifyHapp() {
         "Happ 1.1.1.1 ошибочно попал в DIRECT"
     }
     println("Happ 1.1.1.1 → PROXY (GlobalProxy)")
-    println("Happ: доменов ${domainExpectations.size}, IP ${ipExpectations.size + 1}, deeplink JSON")
+    val checkedDomainCount = domainExpectations.size + finalProxyCanaries.size
+    println("Happ: доменов $checkedDomainCount, IP ${ipExpectations.size + 1}, deeplink JSON")
 }
 
 verifyHapp()
+
+data class StashProviderCheck(
+    val fields: MutableMap<String, String> = linkedMapOf()
+)
+
+data class StashOverrideCheck(
+    val providers: Map<String, StashProviderCheck>,
+    val ruleLines: List<String>
+)
+
+fun stashQuotedValue(value: String): String {
+    check(Regex("'(?:[^']|'')*'").matches(value)) { "Некорректная YAML-строка Stash: $value" }
+    return value.substring(1, value.length - 1).replace("''", "'")
+}
+
+fun stashYamlSection(lines: List<String>, name: String): List<String> {
+    val start = lines.indexOfFirst { it.startsWith("$name:") }
+    check(start >= 0) { "В Stash отсутствует секция $name" }
+    return lines.drop(start + 1).takeWhile { it.startsWith(' ') }
+}
+
+fun readStashOverride(path: Path): StashOverrideCheck {
+    val lines =
+        Files
+            .readAllLines(path)
+            .filter { it.isNotBlank() && !it.trimStart().startsWith('#') }
+    val rootKeys = lines.filterNot { it.startsWith(' ') }.map { it.substringBefore(':') }
+    check(rootKeys == listOf("name", "desc", "mode", "proxy-groups", "rule-providers", "rules")) {
+        "Неожиданная структура override $path: $rootKeys"
+    }
+    check("mode: rule" in lines && "rules: #!replace" in lines) {
+        "$path: нужны mode: rule и полная замена правил"
+    }
+    check(stashYamlSection(lines, "proxy-groups") == listOf(
+        "  - name: RU-PROXY",
+        "    type: select",
+        "    include-all: true"
+    )) { "$path: группа должна использовать существующие серверы без DIRECT и автопереключения" }
+    val providers = linkedMapOf<String, StashProviderCheck>()
+    var current: StashProviderCheck? = null
+    stashYamlSection(lines, "rule-providers").forEach { line ->
+        when {
+            line.startsWith("  ") && !line.startsWith("   ") -> {
+                check(line.endsWith(':')) { "$path: некорректный заголовок provider: $line" }
+                val name = line.trim().removeSuffix(":")
+                check(Regex("ru-[a-z-]+").matches(name)) { "$path: неизвестное имя provider $name" }
+                val provider = StashProviderCheck()
+                check(providers.put(name, provider) == null) { "$path: повторный provider $name" }
+                current = provider
+            }
+            line.startsWith("    ") && !line.startsWith("     ") -> {
+                val provider = checkNotNull(current) { "$path: свойство без provider" }
+                val field = line.removePrefix("    ")
+                check(':' in field) { "$path: некорректное свойство $line" }
+                val key = field.substringBefore(':')
+                val value = field.substringAfter(':').trim()
+                check(provider.fields.put(key, value) == null) { "$path: повторное свойство $key" }
+            }
+            else -> error("$path: неподдерживаемая строка provider: $line")
+        }
+    }
+    val ruleLines = stashYamlSection(lines, "rules").map { line ->
+        check(line.startsWith("  - ")) { "$path: некорректная строка rules: $line" }
+        stashQuotedValue(line.removePrefix("  - "))
+    }
+    check(ruleLines.isNotEmpty()) { "$path: пустой rules" }
+    return StashOverrideCheck(providers, ruleLines)
+}
+
+fun stashPayloadRules(payload: List<String>, behavior: String): List<String> =
+    payload.map { value ->
+        when (behavior) {
+            "domain" -> {
+                if (value.startsWith("+.")) "DOMAIN-SUFFIX,${value.removePrefix("+.")}" else "DOMAIN,$value"
+            }
+            "ipcidr" -> {
+                val type = if (':' in value) "IP-CIDR6" else "IP-CIDR"
+                validateCidr(type, value, "Stash payload")
+                "$type,$value"
+            }
+            else -> error("Неизвестный behavior Stash: $behavior")
+        }
+    }
+
+fun verifyStash() {
+    check(Files.readAllBytes(Path.of("rules/Independent-RU-Routing.stoverride")).contentEquals(
+        Files.readAllBytes(Path.of("stash/routing.stoverride"))
+    )) { "Прежний URL дополнения Stash должен отдавать тот же автообновляемый профиль" }
+    val remote = readStashOverride(Path.of("stash/routing.stoverride"))
+    val baseUrl = "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/rules"
+    val sourceLists = expectedLocalLists.associateBy { name ->
+        val slug =
+            name
+                .removeSuffix(".list")
+                .lowercase(Locale.ROOT)
+                .replace('_', '-')
+        "ru-$slug"
+    }
+    check(remote.providers.keys == sourceLists.keys) {
+        "Stash подключает не все исходные списки или содержит посторонний provider"
+    }
+    val decodedProviders = linkedMapOf<String, List<String>>()
+    var payloadCount = 0
+    sourceLists.forEach { (providerName, sourceName) ->
+        val remoteProvider = checkNotNull(remote.providers[providerName])
+        val behavior = if (sourceName == "DIRECT_IP.list") "ipcidr" else "domain"
+        val fileName = "${providerName.removePrefix("ru-")}.yaml"
+        check(remoteProvider.fields == linkedMapOf(
+            "type" to "http",
+            "behavior" to behavior,
+            "format" to "yaml",
+            "url" to "$baseUrl/$fileName",
+            "path" to "./rule-providers/$providerName.yaml",
+            "interval" to "21600"
+        )) { "Stash: неверные параметры remote provider $providerName" }
+        val payloadLines = activeLines(Path.of("stash/rules", fileName))
+        check(payloadLines.firstOrNull() == "payload:") { "Stash: отсутствует payload $fileName" }
+        val payload = payloadLines.drop(1).map { line ->
+            check(line.startsWith("- ")) { "Stash: неверная YAML-запись $fileName: $line" }
+            stashQuotedValue(line.removePrefix("- "))
+        }
+        check(payload.isNotEmpty() && payload.distinct().size == payload.size) {
+            "Stash: пустой payload или дубликаты в $fileName"
+        }
+        val restoredRules = stashPayloadRules(payload, behavior)
+        val sourceRules = activeLines(Path.of("rules", sourceName)).filterNot {
+            it.startsWith("DOMAIN-KEYWORD,") || it.startsWith("DOMAIN-WILDCARD,")
+        }
+        check(restoredRules == sourceRules) {
+            "Stash: при конвертации $sourceName изменились тип, значение или порядок правил"
+        }
+        decodedProviders[providerName] = restoredRules
+        payloadCount += payload.size
+    }
+    val privateIpv6Ranges = listOf("::1/128", "fc00::/7", "fe80::/10")
+    val privateIpv6Rules = privateIpv6Ranges.map { "IP-CIDR6,$it,DIRECT,no-resolve" }
+    val sourceConfig = activeLines(Path.of("shadowrocket.conf"))
+    val sourceRuleLines = sourceConfig.drop(sourceConfig.indexOf("[Rule]") + 1)
+    val expectedOrder = mutableListOf<String>()
+    sourceRuleLines.forEach { line ->
+        val parts = line.split(',')
+        if (parts[0] == "RULE-SET") {
+            val sourceName = parts[1].substringAfterLast('/')
+            val provider = sourceLists.entries.single { it.value == sourceName }.key
+            val policy = if (parts[2] == "PROXY") "RU-PROXY" else parts[2]
+            activeLines(Path.of("rules", sourceName)).filter {
+                it.startsWith("DOMAIN-KEYWORD,") || it.startsWith("DOMAIN-WILDCARD,")
+            }.forEach { expectedOrder.add("$it,$policy") }
+            expectedOrder.add("RULE-SET,$provider,$policy")
+        } else {
+            expectedOrder.add(parts.mapIndexed { index, part ->
+                when {
+                    index == 0 && part == "FINAL" -> "MATCH"
+                    part == "PROXY" -> "RU-PROXY"
+                    else -> part
+                }
+            }.joinToString(","))
+        }
+    }
+    val firstDomain = expectedOrder.indexOfFirst { it.startsWith("DOMAIN") || it.startsWith("RULE-SET,") }
+    check(firstDomain >= 0) { "Stash: не найдена доменная фаза" }
+    expectedOrder.addAll(firstDomain, privateIpv6Rules.filterNot { it in expectedOrder })
+    check(remote.ruleLines == expectedOrder) { "Stash: изменён полный порядок DOMAIN/IP-правил" }
+    check(remote.ruleLines.count { it.startsWith("MATCH,") } == 1 &&
+        remote.ruleLines.last() == "MATCH,RU-PROXY") { "Stash: нужен единственный завершающий MATCH,RU-PROXY" }
+    val stashRules = remote.ruleLines.flatMap { line ->
+        val parts = line.split(',').map { if (it == "RU-PROXY") "PROXY" else it }
+        when (parts[0]) {
+            "RULE-SET" -> {
+                check(parts.size == 3) { "Stash: некорректная ссылка RULE-SET: $line" }
+                checkNotNull(decodedProviders[parts[1]]).map { rule ->
+                    parseInlineRule("$rule,${parts[2]}", "stash:${parts[1]}")
+                }
+            }
+            "MATCH" -> listOf(parseInlineRule("FINAL,${parts[1]}", "stash:rules"))
+            else -> listOf(parseInlineRule(parts.joinToString(","), "stash:rules"))
+        }
+    }
+    val lastDomain = stashRules.indexOfLast { it.type.startsWith("DOMAIN") }
+    check(stashRules.take(lastDomain + 1).filter { it.type.startsWith("IP-") }.all { it.noResolve }) {
+        "Stash: ранние IP-правила могут вызвать DNS до завершения доменной фазы"
+    }
+    privateIpv6Rules.forEach { line ->
+        val actual = parseInlineRule(line, "stash:rules")
+        check(actual in stashRules.take(lastDomain + 1)) { "Stash: отсутствует раннее IPv6-правило $line" }
+    }
+    expectations.forEach { (target, expected) ->
+        val actual = matchedRule(stashRules, target)
+        check(actual.policy == expected) { "Stash $target: ожидался $expected, получен ${actual.policy}" }
+        if (target in finalProxyCanaries) {
+            check(actual.type == "FINAL") { "Stash $target перехвачен слишком широким правилом" }
+        }
+    }
+    val cidrs =
+        stashRules
+            .filter { it.type in setOf("IP-CIDR", "IP-CIDR6") }
+            .associate { rule ->
+                val parts = rule.value.split('/')
+                rule.value to HappCidr(InetAddress.getByName(parts[0]).address, parts[1].toInt())
+            }
+    fun routeWithDns(target: String, dnsAnswer: String = "1.1.1.1"): Pair<Rule, Int> {
+        val isLiteral = ipv4Value(target) != null || ':' in target
+        var address = if (isLiteral) InetAddress.getByName(target).address else null
+        var lookups = 0
+        stashRules.forEachIndexed { index, rule ->
+            if (!isLiteral && rule.type.startsWith("DOMAIN") && matchesDomain(rule, target)) {
+                return rule to lookups
+            }
+            if (rule.type in setOf("IP-CIDR", "IP-CIDR6", "GEOIP")) {
+                if (address == null && !rule.noResolve) {
+                    check(index > lastDomain) { "Stash: DNS вызван до завершения DOMAIN-фазы" }
+                    address = InetAddress.getByName(dnsAnswer).address
+                    lookups++
+                }
+                val currentAddress = address
+                if (rule.type != "GEOIP" && currentAddress != null &&
+                    matchesHappCidr(checkNotNull(cidrs[rule.value]), currentAddress)) {
+                    return rule to lookups
+                }
+                // GEOIP-базу клиента здесь не подменяем; RU проверяется реальным provider выше.
+            }
+            if (rule.type == "FINAL") return rule to lookups
+        }
+        error("Stash: для $target не найден маршрут")
+    }
+    listOf("::1", "fd12:3456::1", "fe80::1").forEach { address ->
+        val (rule, lookups) = routeWithDns(address)
+        check(rule.policy == "DIRECT" && rule.noResolve && lookups == 0) {
+            "Stash $address должен идти напрямую без DNS"
+        }
+    }
+    val unknownRu = routeWithDns("unlisted-routing-check.example", "213.24.64.175")
+    check(unknownRu.first.policy == "DIRECT" && unknownRu.second == 1) {
+        "Stash: неизвестный домен с российским IP должен попасть в DIRECT после одного DNS lookup"
+    }
+    val knownProxyRu = routeWithDns("youtube.com", "213.24.64.175")
+    check(knownProxyRu.first.policy == "PROXY" && knownProxyRu.second == 0) {
+        "Stash: российский IP не должен переопределять доменное правило PROXY"
+    }
+    val unknownPrivate = routeWithDns("unlisted-routing-check.example", "10.1.2.3")
+    check(unknownPrivate.first.policy == "DIRECT" && unknownPrivate.second == 1) {
+        "Stash: private DNS-ответ должен обрабатываться после доменной фазы"
+    }
+    listOf("1.1.1.1", "2606:4700:4700::1111").forEach { address ->
+        val (rule, lookups) = routeWithDns(address)
+        check(rule.policy == "PROXY" && lookups == 0) { "Stash $address ошибочно попал в DIRECT" }
+    }
+    val unknownForeign = routeWithDns("unlisted-routing-check.example")
+    check(unknownForeign.first.type == "FINAL" && unknownForeign.second == 1) {
+        "Stash: неизвестный зарубежный адрес должен попадать в MATCH после IP-фазы"
+    }
+    println("Stash: ${sourceLists.size} автообновляемых providers, $payloadCount записей проверены")
+    println("Stash: ${expectations.size} маршрутов, IPv6 private и порядок DNS/IP проверены")
+}
+
+verifyStash()

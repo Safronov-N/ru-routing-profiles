@@ -490,6 +490,24 @@ fun geoCategoryNames(bytes: ByteArray): Set<String> {
     return names
 }
 
+fun wildcardDomainRegex(pattern: String): String {
+    require(pattern.all { it in 'a'..'z' || it in '0'..'9' || it in ".-_*?" }) {
+        "Неподдерживаемый символ доменного wildcard: $pattern"
+    }
+    return buildString {
+        append('^')
+        pattern.forEach { character ->
+            when (character) {
+                '*' -> append(".*")
+                '?' -> append('.')
+                '.' -> append("\\.")
+                else -> append(character)
+            }
+        }
+        append('$')
+    }
+}
+
 fun geositeEntry(name: String, rules: List<String>): ByteArray {
     val entry = ByteArrayOutputStream()
     entry.write(protobufString(1, name.uppercase()))
@@ -500,13 +518,15 @@ fun geositeEntry(name: String, rules: List<String>): ByteArray {
         val domainType =
             when (type) {
                 "DOMAIN-KEYWORD" -> 0
+                "DOMAIN-WILDCARD" -> 1
                 "DOMAIN-SUFFIX" -> 2
                 "DOMAIN" -> 3
                 else -> error("Нельзя перенести $rule в Happ geosite.dat")
             }
         val domain = ByteArrayOutputStream()
         domain.write(protobufNumber(1, domainType))
-        domain.write(protobufString(2, value))
+        val encodedValue = if (type == "DOMAIN-WILDCARD") wildcardDomainRegex(value) else value
+        domain.write(protobufString(2, encodedValue))
         entry.write(protobufBytes(2, domain.toByteArray()))
     }
     return protobufBytes(1, entry.toByteArray())
@@ -568,6 +588,7 @@ fun matchesDomainRule(rule: String, hostname: String): Boolean {
         "DOMAIN" -> hostname == value
         "DOMAIN-SUFFIX" -> hostname == value || hostname.endsWith(".$value")
         "DOMAIN-KEYWORD" -> value in hostname
+        "DOMAIN-WILDCARD" -> Regex(wildcardDomainRegex(value)).matches(hostname)
         else -> false
     }
 }
@@ -833,7 +854,8 @@ val proxyCategoryRules =
         .flatMap { category -> geositeRules(category, v2flyBaseUrl) }
         .distinct()
         .sorted()
-val manualProxyRules = listOf("DOMAIN-KEYWORD,chatgpt-async-webps-prod-")
+// Wildcard ограничен сервисным префиксом и зоной Azure, но не повторяет исходный regexp полностью.
+val manualProxyRules = listOf("DOMAIN-WILDCARD,chatgpt-async-webps-prod-*-*.webpubsub.azure.com")
 val proxyDomainRules = (proxyCategoryRules + manualProxyRules).distinct().sorted()
 val directDomainRules =
     geositeRules("category-ru", v2flyBaseUrl)
@@ -846,7 +868,7 @@ val foreignCategoryRules =
         .flatMap { category -> geositeRules(category, v2flyBaseUrl) }
         .distinct()
         .sorted()
-val manualForeignDirectRules = listOf("DOMAIN-KEYWORD,epicgames-download")
+val manualForeignDirectRules = (0..9).map { number -> "DOMAIN,epicgames-download$number.akamaized.net" }
 val directForeignRules = (foreignCategoryRules + manualForeignDirectRules).distinct().sorted()
 check(proxyDomainRules.size >= 50) { "v2fly PROXY содержит только ${proxyDomainRules.size} правил" }
 check(knownOpenaiRegexSkipped <= 1) { "v2fly openai повторяет неподдерживаемый regexp" }
@@ -879,13 +901,16 @@ val expectedForeignOneLabelSuffixes =
 check(oneLabelSuffixes(directForeignRules) == expectedForeignOneLabelSuffixes) {
     "В зарубежном DIRECT изменились правила для целых доменных зон"
 }
-check(proxyDomainRules.filter { it.startsWith("DOMAIN-KEYWORD,") } == manualProxyRules) {
+check(proxyDomainRules.none { it.startsWith("DOMAIN-KEYWORD,") }) {
     "В PROXY появились непроверенные широкие keyword-правила"
+}
+check(proxyDomainRules.filter { it.startsWith("DOMAIN-WILDCARD,") } == manualProxyRules) {
+    "В PROXY изменились проверенные wildcard-правила"
 }
 check(directDomainRules.none { it.startsWith("DOMAIN-KEYWORD,") }) {
     "В российском DIRECT появились непроверенные широкие keyword-правила"
 }
-check(directForeignRules.filter { it.startsWith("DOMAIN-KEYWORD,") } == manualForeignDirectRules) {
+check(directForeignRules.none { it.startsWith("DOMAIN-KEYWORD,") }) {
     "В зарубежном DIRECT появились непроверенные широкие keyword-правила"
 }
 fun proxyRuleOverlapsPriority(rule: String, priority: String): Boolean {
@@ -896,6 +921,15 @@ fun proxyRuleOverlapsPriority(rule: String, priority: String): Boolean {
         "DOMAIN-SUFFIX" ->
             value == priority || value.endsWith(".$priority") || priority.endsWith(".$value")
         "DOMAIN-KEYWORD" -> value in priority
+        "DOMAIN-WILDCARD" -> {
+            val fixedSuffix =
+                value
+                    .split('.')
+                    .takeLastWhile { label -> '*' !in label && '?' !in label }
+                    .joinToString(".")
+            check(fixedSuffix.isNotEmpty()) { "Wildcard не ограничен доменной зоной: $rule" }
+            fixedSuffix == priority || fixedSuffix.endsWith(".$priority") || priority.endsWith(".$fixedSuffix")
+        }
         else -> error("Неизвестное PROXY-правило: $rule")
     }
 }
@@ -1077,53 +1111,6 @@ check("private-ip-answer = true" in configLines) {
     "Private DNS-ответы должны приниматься"
 }
 generatedFiles[Path.of("shadowrocket.conf")] = shadowrocketConfig
-
-val ruleSection = configLines.indexOf("[Rule]")
-check(ruleSection >= 0) { "В шаблоне Shadowrocket отсутствует секция [Rule]" }
-val shadowrocketRules = configLines.drop(ruleSection + 1)
-check(shadowrocketRules.lastOrNull() == "FINAL,PROXY") { "Ожидалось финальное правило FINAL,PROXY" }
-val stashProviders = linkedMapOf<String, String>()
-val rulesUrl = "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/"
-val stashRules =
-    shadowrocketRules.map { rule ->
-        val parts = rule.split(',')
-        when (parts.first()) {
-            "RULE-SET" -> {
-                check(parts.size == 3 && parts[1].startsWith(rulesUrl)) {
-                    "Неподдерживаемый список для Stash: $rule"
-                }
-                val fileName = parts[1].removePrefix(rulesUrl)
-                val path = rulesDirectory.resolve(fileName)
-                check(path == priorityPath || path in generatedFiles) { "Неизвестный список для Stash: $fileName" }
-                val provider = "ru-${fileName.removeSuffix(".list").lowercase(Locale.ROOT).replace('_', '-')}"
-                stashProviders[provider] = parts[1]
-                "RULE-SET,$provider,${parts[2]}"
-            }
-            "FINAL" -> rule.replaceFirst("FINAL,", "MATCH,")
-            "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
-            "IP-CIDR", "IP-CIDR6", "GEOIP" -> rule
-            else -> error("Неподдерживаемое правило для Stash: $rule")
-        }
-    }
-generatedFiles[rulesDirectory.resolve("Independent-RU-Routing.stoverride")] =
-    buildString {
-        appendLine("# Сгенерировано из shadowrocket.template.conf.")
-        appendLine("name: Independent RU Routing")
-        appendLine("desc: Правила ru-routing-profiles для подписки с группой PROXY.")
-        appendLine("mode: rule")
-        appendLine()
-        appendLine("rule-providers:")
-        stashProviders.forEach { (provider, url) ->
-            appendLine("  $provider:")
-            appendLine("    behavior: classical")
-            appendLine("    format: text")
-            appendLine("    url: $url")
-            appendLine("    interval: 21600")
-        }
-        appendLine()
-        appendLine("rules: #!replace")
-        stashRules.forEach { rule -> appendLine("  - $rule") }
-    }
 
 val ipCheckProxyDomains =
     listOf(
