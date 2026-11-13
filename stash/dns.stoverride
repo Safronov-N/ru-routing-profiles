@@ -1,0 +1,72 @@
+# Сгенерировано scripts/generate-stash.main.kts; не редактировать вручную.
+# Требует включённого routing.stoverride и Stash iOS 3.6+ / macOS 4.3+.
+name: 'Independent RU DNS'
+desc: 'Прямой DoH, отдельный DNS для явных DIRECT-сервисов. Требует Independent RU Routing.'
+dns:
+  # DNS не зависит от VPN-сервера и не перенаправляется правилами трафика.
+  follow-rule: false
+  skip-cert-verify: false
+  # IP-адреса позволяют разрешить имя DoH Яндекса без системного bootstrap DNS.
+  default-nameserver: #!replace
+    - 'https://1.1.1.1/dns-query'
+    - 'https://8.8.8.8/dns-query'
+  # Параллельные запросы двум независимым сервисам; используется первый успешный ответ.
+  nameserver: #!replace
+    - 'https://1.1.1.1/dns-query'
+    - 'https://8.8.8.8/dns-query'
+  # Не наследуем дополнительный fallback и его географическую фильтрацию.
+  fallback: #!replace
+    []
+  # Словарь объединяется с частными политиками подписки, а не заменяет его целиком.
+  nameserver-policy:
+    '+.local': system
+    '+.home.arpa': system
+    '+.2ip.ru': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.2ip.io': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.ipify.org': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.ifconfig.me': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.ip.sb': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.checkip.amazonaws.com': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.ipapi.is': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.iplocate.io': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    '+.showip.net': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'chatgpt-async-webps-prod-*-*.webpubsub.azure.com': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'rule-set:ru-proxy-domain': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'rule-set:ru-direct-priority-domain': #!replace
+      - 'https://common.dot.dns.yandex.net/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'rule-set:ru-proxy-refilter-community': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'rule-set:ru-proxy-refilter-domain': #!replace
+      - 'https://1.1.1.1/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'rule-set:ru-direct-domain': #!replace
+      - 'https://common.dot.dns.yandex.net/dns-query'
+      - 'https://8.8.8.8/dns-query'
+    'rule-set:ru-direct-foreign-domain': #!replace
+      - 'https://common.dot.dns.yandex.net/dns-query'
+      - 'https://8.8.8.8/dns-query'
+  # hosts, fake-ip-filter и IPv6 сохраняются из основного профиля.

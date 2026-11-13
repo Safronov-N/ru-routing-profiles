@@ -1318,6 +1318,143 @@ fun stashPayloadRules(payload: List<String>, behavior: String): List<String> =
         }
     }
 
+fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, List<String>>) {
+    val path = Path.of("stash/dns.stoverride")
+    val lines =
+        Files
+            .readAllLines(path)
+            .filter { it.isNotBlank() && !it.trimStart().startsWith('#') }
+    check(lines.filterNot { it.startsWith(' ') }.map { it.substringBefore(':') } ==
+        listOf("name", "desc", "dns") && "dns:" in lines) {
+        "$path: дополнение должно менять только DNS без замены всего словаря"
+    }
+    val dns = stashYamlSection(lines, "dns").map { it.removePrefix("  ") }
+    check(dns.filterNot { it.startsWith(' ') }.map { it.substringBefore(':') } == listOf(
+        "follow-rule",
+        "skip-cert-verify",
+        "default-nameserver",
+        "nameserver",
+        "fallback",
+        "nameserver-policy"
+    )) { "$path: неожиданные DNS-поля; private DNS, Fake IP и IPv6 нельзя затирать" }
+    check("follow-rule: false" in dns && "skip-cert-verify: false" in dns) {
+        "$path: DNS должен работать напрямую с проверкой TLS-сертификатов"
+    }
+    fun resolverList(name: String): List<String> {
+        check("$name: #!replace" in dns) { "$path: список $name должен заменять DNS подписки" }
+        return stashYamlSection(dns, name).map { line ->
+            check(line.startsWith("  - ")) { "$path: неверный список $name: $line" }
+            stashQuotedValue(line.removePrefix("  - "))
+        }
+    }
+    val global = listOf("https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query")
+    val direct = listOf("https://common.dot.dns.yandex.net/dns-query", "https://8.8.8.8/dns-query")
+    check(resolverList("default-nameserver") == global && resolverList("nameserver") == global) {
+        "$path: нужны два независимых DoH без system/UDP в публичном DNS и bootstrap"
+    }
+    check("fallback: #!replace" in dns && stashYamlSection(dns, "fallback") == listOf("  []")) {
+        "$path: унаследованный fallback должен быть отключён, а не дополнен"
+    }
+    check("nameserver-policy:" in dns) { "$path: пользовательские частные DNS-политики должны сохраняться" }
+    val policies = linkedMapOf<String, MutableList<String>>()
+    var current: MutableList<String>? = null
+    val header = Regex("  ('(?:[^']|'')*'): (system|#!replace)")
+    stashYamlSection(dns, "nameserver-policy").forEach { line ->
+        val match = header.matchEntire(line)
+        if (match != null) {
+            val key = stashQuotedValue(match.groupValues[1])
+            val resolvers = mutableListOf<String>()
+            check(policies.put(key, resolvers) == null) { "$path: повторная DNS-политика $key" }
+            if (match.groupValues[2] == "system") resolvers.add("system")
+            current = if (resolvers.isEmpty()) resolvers else null
+        } else {
+            check(line.startsWith("    - ")) { "$path: некорректная DNS-политика: $line" }
+            checkNotNull(current) { "$path: DNS-сервер без списка политики" }
+                .add(stashQuotedValue(line.removePrefix("    - ")))
+        }
+    }
+    check(policies.values.all { it.isNotEmpty() && it.distinct().size == it.size }) {
+        "$path: пустая DNS-политика или повторные резолверы"
+    }
+    val localKeys = setOf("+.local", "+.home.arpa")
+    check(policies.filterValues { "system" in it }.keys == localKeys &&
+        localKeys.all { policies[it] == listOf("system") }) {
+        "$path: system допустим только для явно локальных пространств имён"
+    }
+    val expectedSets = linkedMapOf(
+        "ru-proxy-domain" to global,
+        "ru-direct-priority-domain" to direct,
+        "ru-proxy-refilter-community" to global,
+        "ru-proxy-refilter-domain" to global,
+        "ru-direct-domain" to direct,
+        "ru-direct-foreign-domain" to direct
+    )
+    val actualSets = policies.filterKeys { it.startsWith("rule-set:") }
+    check(actualSets.keys.toList() == expectedSets.keys.map { "rule-set:$it" }) {
+        "$path: нарушен приоритет DNS-наборов PROXY / приоритетный DIRECT / Re-filter / DIRECT"
+    }
+    expectedSets.forEach { (name, resolvers) ->
+        check(remote.providers[name]?.fields?.get("behavior") == "domain" &&
+            policies["rule-set:$name"] == resolvers) { "$path: неверный DNS-набор или резолверы $name" }
+    }
+    check(policies.keys.none { it in setOf("+.ru", "+.xn--p1ai", "+.su", "+.by") }) {
+        "$path: национальный wildcard перекроет DNS-исключения из rule-set"
+    }
+    policies.filterKeys { it !in localKeys }.values.forEach { resolvers ->
+        check(resolvers == global || resolvers == direct) { "$path: неизвестные публичные DNS: $resolvers" }
+    }
+    val domainSets = expectedSets.keys.associateWith { name ->
+        checkNotNull(decodedProviders[name]).map { parseInlineRule("$it,DIRECT", "dns:$name") }
+    }
+    fun policyMatches(key: String, domain: String): Boolean =
+        when {
+            key.startsWith("rule-set:") -> checkNotNull(domainSets[key.removePrefix("rule-set:")])
+                .any { matchesDomain(it, domain) }
+            key.startsWith("+.") -> domain == key.removePrefix("+.") || domain.endsWith(key.removePrefix("+"))
+            '*' in key || '?' in key -> wildcardMatches(key, domain)
+            else -> key == domain
+        }
+    // Проверяем заявленные приоритеты офлайн; это не исполнение DNS ядром Stash.
+    val orderedPolicies = policies.entries.sortedBy { (key, _) ->
+        when {
+            key.startsWith("rule-set:") -> 2
+            key.startsWith("+.") || '*' in key || '?' in key -> 1
+            else -> 0
+        }
+    }
+    fun resolversFor(domain: String): List<String> =
+        orderedPolicies.firstOrNull { policyMatches(it.key, domain) }?.value ?: global
+    val checks = linkedMapOf(
+        "local" to listOf("system"),
+        "printer.local" to listOf("system"),
+        "home.arpa" to listOf("system"),
+        "router.home.arpa" to listOf("system"),
+        "2ip.ru" to global,
+        "api.2ip.ru" to global,
+        "youtube.ru" to global,
+        "github.com" to global,
+        "copilot.microsoft.com" to global,
+        "gql.twitch.tv" to global,
+        dynamicOpenaiCanary to global,
+        "gosuslugi.ru" to direct,
+        "lkfl2.nalog.ru" to direct,
+        priorityOpenaiLookalike to direct,
+        "api.ozon.ru" to direct,
+        "netmonet.co" to direct,
+        "apple.com" to direct,
+        nationalCanary to direct,
+        "unlisted-routing-check.example" to global,
+        "printer.local.evil.example" to global,
+        "home.arpa.evil.example" to global,
+        "nalog.ru.evil.example" to global,
+        "chatgpt-async-webps-prod-demo-123.webpubsub.azure.com.evil.example" to global
+    )
+    checks.forEach { (domain, expected) ->
+        check(resolversFor(domain) == expected) { "$path: неверный набор DNS для $domain" }
+    }
+    println("Stash DNS: ${checks.size} офлайн-сценария, приоритеты, DoH и границы изменений проверены")
+}
+
 fun verifyStash() {
     check(Files.readAllBytes(Path.of("rules/Independent-RU-Routing.stoverride")).contentEquals(
         Files.readAllBytes(Path.of("stash/routing.stoverride"))
@@ -1485,6 +1622,7 @@ fun verifyStash() {
     check(unknownForeign.first.type == "FINAL" && unknownForeign.second == 1) {
         "Stash: неизвестный зарубежный адрес должен попадать в MATCH после IP-фазы"
     }
+    verifyStashDns(remote, decodedProviders)
     println("Stash: ${sourceLists.size} автообновляемых providers, $payloadCount записей проверены")
     println("Stash: ${expectations.size} маршрутов, IPv6 private и порядок DNS/IP проверены")
 }

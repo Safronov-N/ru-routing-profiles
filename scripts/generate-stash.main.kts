@@ -251,6 +251,61 @@ generatedFiles[outputDirectory.resolve("routing.stoverride")] = stashOverride
 // Сохраняем прежний адрес автообновления уже установленных дополнений Stash.
 generatedFiles[Path.of("rules/Independent-RU-Routing.stoverride")] = stashOverride
 
+val publicDnsServers = listOf("https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query")
+val directDnsServers = listOf("https://common.dot.dns.yandex.net/dns-query", "https://8.8.8.8/dns-query")
+val dnsPolicies = linkedMapOf<String, List<String>>()
+// Явные исключения перед первым набором правил сохраняют приоритет и в DNS.
+stashRules
+    .takeWhile { !it.startsWith("RULE-SET,") }
+    .filter { it.startsWith("DOMAIN") }
+    .forEach { rule ->
+        val parts = rule.split(',')
+        val key = when (parts[0]) {
+            "DOMAIN", "DOMAIN-WILDCARD" -> parts[1]
+            "DOMAIN-SUFFIX" -> "+.${parts[1]}"
+            else -> error("Неподдерживаемое DNS-исключение: $rule")
+        }
+        dnsPolicies[key] = if (parts[2] == "DIRECT") directDnsServers else publicDnsServers
+    }
+// Все наборы имеют одинаковый приоритет сопоставления; Stash выбирает первый совпавший.
+// Национальные суффиксы не превращаем в wildcard: он был бы сильнее явных proxy-наборов.
+stashRules.filter { it.startsWith("RULE-SET,") }.forEach { rule ->
+    val parts = rule.split(',')
+    if (checkNotNull(providers[parts[1]]).behavior == "domain") {
+        dnsPolicies["rule-set:${parts[1]}"] = if (parts[2] == "DIRECT") directDnsServers else publicDnsServers
+    }
+}
+
+generatedFiles[outputDirectory.resolve("dns.stoverride")] =
+    buildString {
+        appendLine("# Сгенерировано scripts/generate-stash.main.kts; не редактировать вручную.")
+        appendLine("# Требует включённого routing.stoverride и Stash iOS 3.6+ / macOS 4.3+.")
+        appendLine("name: 'Independent RU DNS'")
+        appendLine("desc: 'Прямой DoH, отдельный DNS для явных DIRECT-сервисов. Требует Independent RU Routing.'")
+        appendLine("dns:")
+        appendLine("  # DNS не зависит от VPN-сервера и не перенаправляется правилами трафика.")
+        appendLine("  follow-rule: false")
+        appendLine("  skip-cert-verify: false")
+        appendLine("  # IP-адреса позволяют разрешить имя DoH Яндекса без системного bootstrap DNS.")
+        appendLine("  default-nameserver: #!replace")
+        publicDnsServers.forEach { appendLine("    - ${yamlQuote(it)}") }
+        appendLine("  # Параллельные запросы двум независимым сервисам; используется первый успешный ответ.")
+        appendLine("  nameserver: #!replace")
+        publicDnsServers.forEach { appendLine("    - ${yamlQuote(it)}") }
+        appendLine("  # Не наследуем дополнительный fallback и его географическую фильтрацию.")
+        appendLine("  fallback: #!replace")
+        appendLine("    []")
+        appendLine("  # Словарь объединяется с частными политиками подписки, а не заменяет его целиком.")
+        appendLine("  nameserver-policy:")
+        appendLine("    '+.local': system")
+        appendLine("    '+.home.arpa': system")
+        dnsPolicies.forEach { (key, servers) ->
+            appendLine("    ${yamlQuote(key)}: #!replace")
+            servers.forEach { appendLine("      - ${yamlQuote(it)}") }
+        }
+        appendLine("  # hosts, fake-ip-filter и IPv6 сохраняются из основного профиля.")
+    }
+
 // Пишем результаты только после проверки всех входных списков и правил.
 Files.createDirectories(outputDirectory.resolve("rules"))
 generatedFiles.forEach { (path, content) -> Files.writeString(path, content) }
