@@ -203,10 +203,13 @@ check(privateIpv6Ranges.all { it in directIpProvider.payload }) {
     "В DIRECT_IP отсутствуют ожидаемые локальные IPv6-сети"
 }
 val privateIpv6Rules = privateIpv6Ranges.map { range -> "IP-CIDR6,$range,DIRECT,no-resolve" }
+val localDomainSuffixes = listOf("local", "home.arpa")
+val localDomainRules = localDomainSuffixes.map { suffix -> "DOMAIN-SUFFIX,$suffix,DIRECT" }
 val firstDomainIndex = stashRules.indexOfFirst { it.startsWith("DOMAIN") || it.startsWith("RULE-SET,") }
 check(firstDomainIndex >= 0) { "Не найдена доменная фаза Stash" }
 // Stash может обслуживать IPv6 независимо от ipv6=false в исходном Shadowrocket-профиле.
-stashRules.addAll(firstDomainIndex, privateIpv6Rules.filterNot { it in stashRules })
+val localRules = (privateIpv6Rules + localDomainRules).filterNot { it in stashRules }
+stashRules.addAll(firstDomainIndex, localRules)
 
 val generatedFiles = linkedMapOf<Path, String>()
 providers.values.forEach { provider ->
@@ -257,7 +260,7 @@ val dnsPolicies = linkedMapOf<String, List<String>>()
 // Явные исключения перед первым набором правил сохраняют приоритет и в DNS.
 stashRules
     .takeWhile { !it.startsWith("RULE-SET,") }
-    .filter { it.startsWith("DOMAIN") }
+    .filter { it.startsWith("DOMAIN") && it !in localDomainRules }
     .forEach { rule ->
         val parts = rule.split(',')
         val key = when (parts[0]) {
@@ -297,8 +300,7 @@ generatedFiles[outputDirectory.resolve("dns.stoverride")] =
         appendLine("    []")
         appendLine("  # Словарь объединяется с частными политиками подписки, а не заменяет его целиком.")
         appendLine("  nameserver-policy:")
-        appendLine("    '+.local': system")
-        appendLine("    '+.home.arpa': system")
+        localDomainSuffixes.forEach { suffix -> appendLine("    '+.$suffix': system") }
         dnsPolicies.forEach { (key, servers) ->
             appendLine("    ${yamlQuote(key)}: #!replace")
             servers.forEach { appendLine("      - ${yamlQuote(it)}") }

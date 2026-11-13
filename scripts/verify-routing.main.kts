@@ -1532,7 +1532,8 @@ fun verifyStash() {
     }
     val firstDomain = expectedOrder.indexOfFirst { it.startsWith("DOMAIN") || it.startsWith("RULE-SET,") }
     check(firstDomain >= 0) { "Stash: не найдена доменная фаза" }
-    expectedOrder.addAll(firstDomain, privateIpv6Rules.filterNot { it in expectedOrder })
+    val localRules = privateIpv6Rules + listOf("DOMAIN-SUFFIX,local,DIRECT", "DOMAIN-SUFFIX,home.arpa,DIRECT")
+    expectedOrder.addAll(firstDomain, localRules.filterNot { it in expectedOrder })
     check(remote.ruleLines == expectedOrder) { "Stash: изменён полный порядок DOMAIN/IP-правил" }
     check(remote.ruleLines.count { it.startsWith("MATCH,") } == 1 &&
         remote.ruleLines.last() == "MATCH,RU-PROXY") { "Stash: нужен единственный завершающий MATCH,RU-PROXY" }
@@ -1600,6 +1601,18 @@ fun verifyStash() {
         val (rule, lookups) = routeWithDns(address)
         check(rule.policy == "DIRECT" && rule.noResolve && lookups == 0) {
             "Stash $address должен идти напрямую без DNS"
+        }
+    }
+    listOf("local", "printer.local", "home.arpa", "router.home.arpa").forEach { domain ->
+        val (rule, lookups) = routeWithDns(domain)
+        check(rule.type == "DOMAIN-SUFFIX" && rule.policy == "DIRECT" && lookups == 0) {
+            "Stash $domain должен выбирать DIRECT по имени до проверки IP"
+        }
+    }
+    listOf("printer.local.invalid", "router.home.arpa.invalid").forEach { domain ->
+        val (rule, _) = routeWithDns(domain)
+        check(rule.type == "FINAL" && rule.policy == "PROXY") {
+            "Stash $domain ошибочно совпал с правилом локальной зоны"
         }
     }
     val unknownRu = routeWithDns("unlisted-routing-check.example", "213.24.64.175")
