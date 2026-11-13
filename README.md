@@ -1,6 +1,6 @@
 # Independent RU Routing
 
-Автообновляемая маршрутизация для Shadowrocket и Happ. Профиль использует собственную политику и три независимых входа: [v2fly domain-list-community](https://github.com/v2fly/domain-list-community) для категорий сервисов, [Re-filter](https://github.com/1andrevich/Re-filter-lists) для дополнительных доменов, требующих прокси в России, и [Loyalsoldier GeoIP](https://github.com/Loyalsoldier/geoip) для российских IP-диапазонов. RoscomVPN не участвует в сборке. Опубликованные файлы используют адреса репозитория `Safronov-N/ru-routing-profiles`.
+Автообновляемая маршрутизация для Shadowrocket, Happ и Stash. Профиль использует собственную политику и три независимых входа: [v2fly domain-list-community](https://github.com/v2fly/domain-list-community) для категорий сервисов, [Re-filter](https://github.com/1andrevich/Re-filter-lists) для дополнительных доменов, требующих прокси в России, и [Loyalsoldier GeoIP](https://github.com/Loyalsoldier/geoip) для российских IP-диапазонов. RoscomVPN не участвует в сборке. Опубликованные файлы используют адреса репозитория `Safronov-N/ru-routing-profiles`.
 
 Генератор не содержит VPN-серверов, ключей и учётных данных. `PROXY` использует выбранное в приложении подключение.
 
@@ -37,6 +37,20 @@ https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/shadowrock
 
 Для полной Xray JSON-конфигурации Happ передаёт JSON ядру без наложения обычных правил приложения. Профиль управляет геофайлами и Tunnel DNS; маршрутизацию в таком режиме нужно проверять в самом JSON подписки. Это отличается от обычного списка серверов `vless://`. Подробнее — [документация Happ](https://www.happ.su/main/ru/dev-docs/examples-of-links-and-parameters).
 
+## Stash
+
+1. Выберите рабочий профиль с VPN. В группе `PROXY` выберите свой сервер.
+2. Откройте **Переопределение → Установить по URL** и вставьте адрес:
+
+   ```text
+   https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/Independent-RU-Routing.stoverride
+   ```
+
+3. Включите установленное переопределение **Independent RU Routing**. Если ранее создавали локальную копию, отключите её.
+4. Чтобы обновить переопределение вручную, нажмите кнопку обновления ↻ в разделе **Переопределение**.
+
+Stash проверяет обновления списков каждые шесть часов, пока работает. Переопределение использует общий порядок правил Shadowrocket и группу `PROXY` из рабочего профиля. DNS задаётся профилем Stash. [Документация Stash](https://stash.wiki/en/configuration/override)
+
 ## Политика маршрутизации
 
 Доменное правило имеет приоритет перед IP-правилом. Если доменное имя не совпало ни с одним правилом, клиент проверяет IP; конечный маршрут — `PROXY`. Happ использует `DomainStrategy=IPIfNonMatch` и `RouteOrder=block-proxy-direct`.
@@ -72,7 +86,7 @@ https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/shadowrock
 2. Проверяет формат доменов и CIDR, ожидаемые категории, объём и сохранность состава правил относительно предыдущей публикации.
 3. Пропускает записи v2fly с атрибутами `@...` при построении общих категорий. Это намеренно исключает в том числе рекламные, телеметрические и китайские подмножества; категории переносятся не полностью. Для пропущенного домена остаются другие совпадающие правила и последующая IP-фаза.
 4. В каждом сгенерированном доменном списке и каждой категории Happ удаляет только записи, полностью покрытые оставшимся `DOMAIN-SUFFIX` в том же наборе. Типы правил, порядок оставшихся записей и приоритеты списков сохраняются; точное имя не превращается в suffix, `DOMAIN-KEYWORD` не сокращается. IP-списки не минимизируются.
-5. Создаёт собственные ruleset-файлы, профиль Happ и geo-файлы; записывает происхождение и исходные объёмы до минимизации в `rules/SOURCE_MANIFEST.txt`. Несжатые доменные входы сохраняются в `build/domain-rules/` для проверки этой сборки.
+5. Создаёт собственные ruleset-файлы, профиль Happ с geo-файлами и переопределение Stash. Записывает происхождение и исходные объёмы до минимизации в `rules/SOURCE_MANIFEST.txt`. Несжатые доменные входы сохраняются в `build/domain-rules/` для проверки этой сборки.
 6. Проверяет равенство доменного покрытия до и после минимизации, включая готовый Happ `geosite.dat`, порядок правил и контрольные маршруты, после чего публикует весь результат.
 
 Если источник недоступен или проверка не прошла, выпуск не публикуется; последняя опубликованная версия остаётся доступной. Отдельно сообщается возраст входных списков. Неизменная дата коммита сама по себе не доказывает, что данные неверны, поэтому только по возрасту сборка не останавливается.
@@ -94,7 +108,7 @@ kotlinc -script scripts/generate.main.kts
 kotlinc -script scripts/verify-routing.main.kts
 ```
 
-Автоматически создаются `rules/PROXY_DOMAIN.list`, `rules/PROXY_REFILTER_COMMUNITY.list`, `rules/PROXY_REFILTER_DOMAIN.list`, `rules/DIRECT_DOMAIN.list`, `rules/DIRECT_FOREIGN_DOMAIN.list`, `rules/DIRECT_IP.list`, `rules/SOURCE_MANIFEST.txt`, `shadowrocket.conf` и `happ/*`. `rules/DIRECT_PRIORITY_DOMAIN.list` поддерживается вручную. Временные проверочные входы `build/*` не публикуются.
+Автоматически создаются `rules/PROXY_DOMAIN.list`, `rules/PROXY_REFILTER_COMMUNITY.list`, `rules/PROXY_REFILTER_DOMAIN.list`, `rules/DIRECT_DOMAIN.list`, `rules/DIRECT_FOREIGN_DOMAIN.list`, `rules/DIRECT_IP.list`, `rules/SOURCE_MANIFEST.txt`, `shadowrocket.conf`, `happ/*` и `rules/Independent-RU-Routing.stoverride`. `rules/DIRECT_PRIORITY_DOMAIN.list` поддерживается вручную. Временные проверочные входы `build/*` не публикуются.
 
 Pull request повторно запускает генерацию и проверяет, что все созданные файлы включены в изменение. В рабочем профиле видимый результат зависит также от выбранного сервера, DNS, доступности источников правил и сети провайдера.
 

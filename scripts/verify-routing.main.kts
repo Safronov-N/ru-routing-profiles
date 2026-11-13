@@ -671,6 +671,51 @@ fun loadRules(): List<Rule> {
     return rules
 }
 
+fun verifyStashOverride() {
+    val path = Path.of("rules", "Independent-RU-Routing.stoverride")
+    val lines = activeLines(path)
+    val rulesHeader = lines.indexOf("rules: #!replace")
+    val providersHeader = lines.indexOf("rule-providers:")
+    check(providersHeader >= 0 && rulesHeader > providersHeader && "mode: rule" in lines) {
+        "$path: отсутствуют списки, режим по правилам или директива замены правил"
+    }
+    val providerLines = lines.subList(providersHeader + 1, rulesHeader)
+    val providers = linkedMapOf<String, String>()
+    providerLines.chunked(5).forEach { block ->
+        check(
+            block.size == 5 && block[0].matches(Regex("ru-[a-z0-9-]+:")) &&
+                block[1] == "behavior: classical" && block[2] == "format: text" &&
+                block[3].startsWith("url: ") && block[4] == "interval: 21600"
+        ) { "$path: некорректный поставщик правил: $block" }
+        val name = block[0].removeSuffix(":")
+        check(providers.put(name, block[3].removePrefix("url: ")) == null) {
+            "$path: повторный поставщик правил $name"
+        }
+    }
+    check(lines.lastOrNull() == "- MATCH,PROXY") { "$path: ожидалось финальное правило MATCH,PROXY" }
+    val usedProviders = mutableSetOf<String>()
+    val stashRules = lines.drop(rulesHeader + 1).map { line ->
+        check(line.startsWith("- ")) { "$path: некорректная строка правил: $line" }
+        val rule = line.removePrefix("- ")
+        when {
+            rule.startsWith("RULE-SET,") -> {
+                val parts = rule.split(',')
+                check(parts.size == 3) { "$path: некорректный RULE-SET: $rule" }
+                usedProviders.add(parts[1])
+                "RULE-SET,${providers.getValue(parts[1])},${parts[2]}"
+            }
+            rule == "MATCH,PROXY" -> "FINAL,PROXY"
+            else -> rule
+        }
+    }
+    check(usedProviders == providers.keys) { "$path: есть неиспользуемые поставщики правил" }
+    val shadowrocketRules = activeLines(Path.of("shadowrocket.conf")).dropWhile { it != "[Rule]" }.drop(1)
+    check(stashRules.isNotEmpty() && stashRules == shadowrocketRules) {
+        "$path: правила или их порядок отличаются от Shadowrocket"
+    }
+    println("$path: ${stashRules.size} правил и ${providers.size} списков совпадают с Shadowrocket")
+}
+
 fun wildcardMatches(pattern: String, domain: String): Boolean {
     val regex = buildString {
         append('^')
@@ -755,6 +800,7 @@ fun matchedRule(rules: List<Rule>, target: String): Rule {
 verifyDomainCoverageFixtures()
 
 val rules = loadRules()
+verifyStashOverride()
 val firstDomainIndex = rules.indexOfFirst { it.type.startsWith("DOMAIN") }
 val lastDomainIndex = rules.indexOfLast { it.type.startsWith("DOMAIN") }
 val firstResolvingIpIndex = rules.indexOfFirst {

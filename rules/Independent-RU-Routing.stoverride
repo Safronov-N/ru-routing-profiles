@@ -1,0 +1,71 @@
+# Сгенерировано из shadowrocket.template.conf.
+name: Independent RU Routing
+desc: Правила ru-routing-profiles для подписки с группой PROXY.
+mode: rule
+
+rule-providers:
+  ru-proxy-domain:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/PROXY_DOMAIN.list
+    interval: 21600
+  ru-direct-priority-domain:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_PRIORITY_DOMAIN.list
+    interval: 21600
+  ru-proxy-refilter-community:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/PROXY_REFILTER_COMMUNITY.list
+    interval: 21600
+  ru-proxy-refilter-domain:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/PROXY_REFILTER_DOMAIN.list
+    interval: 21600
+  ru-direct-domain:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_DOMAIN.list
+    interval: 21600
+  ru-direct-foreign-domain:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_FOREIGN_DOMAIN.list
+    interval: 21600
+  ru-direct-ip:
+    behavior: classical
+    format: text
+    url: https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/DIRECT_IP.list
+    interval: 21600
+
+rules: #!replace
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,2ip.ru,PROXY
+  - DOMAIN-SUFFIX,2ip.io,PROXY
+  - DOMAIN-SUFFIX,ipify.org,PROXY
+  - DOMAIN-SUFFIX,ifconfig.me,PROXY
+  - DOMAIN-SUFFIX,ip.sb,PROXY
+  - DOMAIN-SUFFIX,checkip.amazonaws.com,PROXY
+  - DOMAIN-SUFFIX,ipapi.is,PROXY
+  - DOMAIN-SUFFIX,iplocate.io,PROXY
+  - DOMAIN-SUFFIX,showip.net,PROXY
+  - RULE-SET,ru-proxy-domain,PROXY
+  - RULE-SET,ru-direct-priority-domain,DIRECT
+  - RULE-SET,ru-proxy-refilter-community,PROXY
+  - DOMAIN-SUFFIX,ru,DIRECT
+  - DOMAIN-SUFFIX,xn--p1ai,DIRECT
+  - DOMAIN-SUFFIX,su,DIRECT
+  - DOMAIN-SUFFIX,by,DIRECT
+  - RULE-SET,ru-proxy-refilter-domain,PROXY
+  - RULE-SET,ru-direct-domain,DIRECT
+  - RULE-SET,ru-direct-foreign-domain,DIRECT
+  - RULE-SET,ru-direct-ip,DIRECT
+  - GEOIP,RU,DIRECT
+  - MATCH,PROXY

@@ -1078,6 +1078,53 @@ check("private-ip-answer = true" in configLines) {
 }
 generatedFiles[Path.of("shadowrocket.conf")] = shadowrocketConfig
 
+val ruleSection = configLines.indexOf("[Rule]")
+check(ruleSection >= 0) { "В шаблоне Shadowrocket отсутствует секция [Rule]" }
+val shadowrocketRules = configLines.drop(ruleSection + 1)
+check(shadowrocketRules.lastOrNull() == "FINAL,PROXY") { "Ожидалось финальное правило FINAL,PROXY" }
+val stashProviders = linkedMapOf<String, String>()
+val rulesUrl = "https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/rules/"
+val stashRules =
+    shadowrocketRules.map { rule ->
+        val parts = rule.split(',')
+        when (parts.first()) {
+            "RULE-SET" -> {
+                check(parts.size == 3 && parts[1].startsWith(rulesUrl)) {
+                    "Неподдерживаемый список для Stash: $rule"
+                }
+                val fileName = parts[1].removePrefix(rulesUrl)
+                val path = rulesDirectory.resolve(fileName)
+                check(path == priorityPath || path in generatedFiles) { "Неизвестный список для Stash: $fileName" }
+                val provider = "ru-${fileName.removeSuffix(".list").lowercase(Locale.ROOT).replace('_', '-')}"
+                stashProviders[provider] = parts[1]
+                "RULE-SET,$provider,${parts[2]}"
+            }
+            "FINAL" -> rule.replaceFirst("FINAL,", "MATCH,")
+            "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
+            "IP-CIDR", "IP-CIDR6", "GEOIP" -> rule
+            else -> error("Неподдерживаемое правило для Stash: $rule")
+        }
+    }
+generatedFiles[rulesDirectory.resolve("Independent-RU-Routing.stoverride")] =
+    buildString {
+        appendLine("# Сгенерировано из shadowrocket.template.conf.")
+        appendLine("name: Independent RU Routing")
+        appendLine("desc: Правила ru-routing-profiles для подписки с группой PROXY.")
+        appendLine("mode: rule")
+        appendLine()
+        appendLine("rule-providers:")
+        stashProviders.forEach { (provider, url) ->
+            appendLine("  $provider:")
+            appendLine("    behavior: classical")
+            appendLine("    format: text")
+            appendLine("    url: $url")
+            appendLine("    interval: 21600")
+        }
+        appendLine()
+        appendLine("rules: #!replace")
+        stashRules.forEach { rule -> appendLine("  - $rule") }
+    }
+
 val ipCheckProxyDomains =
     listOf(
         "2ip.ru",
