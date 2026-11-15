@@ -16,7 +16,7 @@
    https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/routing.stoverride
    ```
 
-2. Включите дополнение, расположите его последним среди дополнений, меняющих маршрутизацию, и выберите рабочий VPN-сервер в группе **RU-PROXY**. В подписке должен быть хотя бы один сервер: Stash считает пустую группу прямым подключением.
+2. Включите дополнение, расположите его после других дополнений, заменяющих список маршрутов, и выберите рабочий VPN-сервер в группе **RU-PROXY**. В подписке должен быть хотя бы один сервер: Stash считает пустую группу прямым подключением.
 3. Переподключитесь. Проверьте в журнале соединений: `2ip.ru`, YouTube и ChatGPT → `RU-PROXY`; `gosuslugi.ru`, `nalog.ru`, Ozon → `DIRECT`. Проверка IP должна показывать адрес выбранного VPN-сервера.
 
 Прежняя ссылка `rules/Independent-RU-Routing.stoverride` также обновляется и содержит то же дополнение. Если оно уже установлено, обновите его кнопкой ↻, затем выберите сервер в новой группе **RU-PROXY**; повторно добавлять дополнение не нужно. Для нового подключения достаточно одной ссылки выше.
@@ -44,6 +44,18 @@ DNS-дополнение отправляет запросы напрямую п
 Доступность DoH и задержки зависят от текущей сети. Проверка генератора подтверждает структуру и выбор DNS-политик, но не заменяет импорт и DNS-диагностику на устройстве. Для отключения достаточно выключить **Independent RU DNS**, сохранив **Independent RU Routing**.
 
 Основание: документация Stash [Overrides](https://stash.wiki/en/configuration/override), [Rule Sets](https://stash.wiki/en/rules/rule-set), [Strategy Groups](https://stash.wiki/en/proxy-protocols/proxy-groups) и [DNS](https://stash.wiki/en/features/dns-server).
+
+### Блокировка рекламы и трекеров
+
+Добавьте **Independent RU AdBlock** по URL в «Переопределения». Порядок сверху вниз: **Independent RU Routing → Independent RU DNS → Independent RU AdBlock**. DNS-дополнение опционально.
+
+```text
+https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/adblock.stoverride
+```
+
+Stash проверяет список [MetaCubeX `category-ads-all`](https://github.com/MetaCubeX/meta-rules-dat/blob/meta/geo/geosite/category-ads-all.yaml) каждые 24 часа. Соединения с известными рекламными и телеметрическими доменами получают `REJECT` до правил маршрутизации. API Ozon (`xapi.ozon.*`, `xapi.ozonru.me`), OneSignal и переходы по ссылкам `clck.yandex.*` обрабатываются обычными маршрутами. Фильтр работает на уровне доменов, поэтому реклама с того же домена, что и контент, останется.
+
+После подключения откройте `https://www.google-analytics.com` и `https://mc.yandex.ru`. В журнале соединений ожидается `REJECT`. Для отключения фильтра достаточно выключить **Independent RU AdBlock**.
 
 ## Shadowrocket
 

@@ -1,0 +1,15 @@
+name: 'Independent RU AdBlock'
+desc: 'Блокировка доменов рекламы и телеметрии. Разместите после Independent RU Routing.'
+
+rule-providers:
+  ru-ads-and-trackers:
+    type: http
+    behavior: domain
+    format: yaml
+    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ads-all.yaml
+    path: ./rule-providers/ru-ads-and-trackers.yaml
+    interval: 86400
+
+rules:
+  # API Ozon, push OneSignal и редиректы Яндекса проходят по обычным правилам маршрутизации.
+  - 'AND,((RULE-SET,ru-ads-and-trackers),(NOT,((OR,((DOMAIN-WILDCARD,xapi.ozon.*),(DOMAIN,xapi.ozonru.me),(DOMAIN-SUFFIX,onesignal.com),(DOMAIN-WILDCARD,clck.yandex.*)))))),REJECT'
