@@ -1400,6 +1400,9 @@ fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, Lis
     check(policies.keys.none { it in setOf("+.ru", "+.xn--p1ai", "+.su", "+.by") }) {
         "$path: национальный wildcard перекроет DNS-исключения из rule-set"
     }
+    check(policies.keys.none { '*' in it || '?' in it } && policies["+.webpubsub.azure.com"] == global) {
+        "$path: для Azure Web PubSub используйте DNS-суффикс вместо wildcard маршрутизации"
+    }
     policies.filterKeys { it !in localKeys }.values.forEach { resolvers ->
         check(resolvers == global || resolvers == direct) { "$path: неизвестные публичные DNS: $resolvers" }
     }
@@ -1411,14 +1414,13 @@ fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, Lis
             key.startsWith("rule-set:") -> checkNotNull(domainSets[key.removePrefix("rule-set:")])
                 .any { matchesDomain(it, domain) }
             key.startsWith("+.") -> domain == key.removePrefix("+.") || domain.endsWith(key.removePrefix("+"))
-            '*' in key || '?' in key -> wildcardMatches(key, domain)
             else -> key == domain
         }
     // Проверяем заявленные приоритеты офлайн; это не исполнение DNS ядром Stash.
     val orderedPolicies = policies.entries.sortedBy { (key, _) ->
         when {
             key.startsWith("rule-set:") -> 2
-            key.startsWith("+.") || '*' in key || '?' in key -> 1
+            key.startsWith("+.") -> 1
             else -> 0
         }
     }
@@ -1436,6 +1438,9 @@ fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, Lis
         "copilot.microsoft.com" to global,
         "gql.twitch.tv" to global,
         dynamicOpenaiCanary to global,
+        "webpubsub.azure.com" to global,
+        "example.webpubsub.azure.com" to global,
+        "example.azure.com" to direct,
         "gosuslugi.ru" to direct,
         "lkfl2.nalog.ru" to direct,
         priorityOpenaiLookalike to direct,

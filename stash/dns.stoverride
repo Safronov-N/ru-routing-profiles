@@ -48,7 +48,7 @@ dns:
     '+.showip.net': #!replace
       - 'https://1.1.1.1/dns-query'
       - 'https://8.8.8.8/dns-query'
-    'chatgpt-async-webps-prod-*-*.webpubsub.azure.com': #!replace
+    '+.webpubsub.azure.com': #!replace
       - 'https://1.1.1.1/dns-query'
       - 'https://8.8.8.8/dns-query'
     'rule-set:ru-proxy-domain': #!replace

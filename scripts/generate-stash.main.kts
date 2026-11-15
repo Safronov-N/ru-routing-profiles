@@ -264,12 +264,15 @@ stashRules
     .forEach { rule ->
         val parts = rule.split(',')
         val key = when (parts[0]) {
-            "DOMAIN", "DOMAIN-WILDCARD" -> parts[1]
+            "DOMAIN" -> parts[1]
             "DOMAIN-SUFFIX" -> "+.${parts[1]}"
+            "DOMAIN-WILDCARD" -> return@forEach
             else -> error("Неподдерживаемое DNS-исключение: $rule")
         }
         dnsPolicies[key] = if (parts[2] == "DIRECT") directDnsServers else publicDnsServers
     }
+// В DNS используется суффикс зоны Web PubSub; wildcard внутри метки остаётся в маршрутах.
+dnsPolicies["+.webpubsub.azure.com"] = publicDnsServers
 // Все наборы имеют одинаковый приоритет сопоставления; Stash выбирает первый совпавший.
 // Национальные суффиксы не превращаем в wildcard: он был бы сильнее явных proxy-наборов.
 stashRules.filter { it.startsWith("RULE-SET,") }.forEach { rule ->
