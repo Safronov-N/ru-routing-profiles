@@ -1,12 +1,4 @@
+# Пустое обновление для устройств, на которых установлено старое переопределение.
 name: 'Independent RU AdBlock'
-desc: 'Выборочная блокировка рекламных серверов Google и Яндекса. Поставьте выше Independent RU Routing.'
-
-rules:
-  # Точные имена рекламных хостов Google.
-  - 'DOMAIN,googleads.g.doubleclick.net,REJECT'
-  - 'DOMAIN,pagead2.googlesyndication.com,REJECT'
-  - 'DOMAIN,pubads.g.doubleclick.net,REJECT'
-  - 'DOMAIN,securepubads.g.doubleclick.net,REJECT'
-  # Рекламная сеть Яндекса и Adfox.
-  - 'DOMAIN,ads.adfox.ru,REJECT'
-  - 'DOMAIN,an.yandex.ru,REJECT'
+desc: 'Блокировка рекламы удалена. Это переопределение можно удалить из Stash.'
+rules: []
