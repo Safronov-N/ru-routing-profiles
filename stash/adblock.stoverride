@@ -1,5 +1,5 @@
 name: 'Independent RU AdBlock'
-desc: 'Блокировка доменов рекламы и телеметрии. Разместите после Independent RU Routing.'
+desc: 'Блокировка доменов рекламы и телеметрии. Поставьте выше Independent RU Routing.'
 
 rule-providers:
   ru-ads-and-trackers:

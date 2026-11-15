@@ -47,7 +47,7 @@ DNS-дополнение отправляет запросы напрямую п
 
 ### Блокировка рекламы и трекеров
 
-Добавьте **Independent RU AdBlock** по URL в «Переопределения». Порядок сверху вниз: **Independent RU Routing → Independent RU DNS → Independent RU AdBlock**. DNS-дополнение опционально.
+Добавьте **Independent RU AdBlock** по URL в «Переопределения». В списке сверху вниз разместите **Independent RU AdBlock → Independent RU Routing → Independent RU DNS**. DNS-дополнение опционально. В меню `⋯` откройте «Просмотреть действующую конфигурацию». Правило с `ru-ads-and-trackers` и `REJECT` должно стоять первым в секции `rules:`. Если список начинается с правил Routing, блокировка не применяется.
 
 ```text
 https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/adblock.stoverride
