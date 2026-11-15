@@ -45,17 +45,17 @@ DNS-дополнение отправляет запросы напрямую п
 
 Основание: документация Stash [Overrides](https://stash.wiki/en/configuration/override), [Rule Sets](https://stash.wiki/en/rules/rule-set), [Strategy Groups](https://stash.wiki/en/proxy-protocols/proxy-groups) и [DNS](https://stash.wiki/en/features/dns-server).
 
-### Блокировка рекламы и трекеров
+### Блокировка рекламы
 
-Добавьте **Independent RU AdBlock** по URL в «Переопределения». В списке сверху вниз разместите **Independent RU AdBlock → Independent RU Routing → Independent RU DNS**. DNS-дополнение опционально. В меню `⋯` откройте «Просмотреть действующую конфигурацию». Правило с `ru-ads-and-trackers` и `REJECT` должно стоять первым в секции `rules:`. Если список начинается с правил Routing, блокировка не применяется.
+**Independent RU AdBlock** — опциональное дополнение для сайтов и приложений. Добавьте его по URL в «Переопределения» или выберите «Обновить» у уже установленного дополнения. Разместите его выше **Independent RU Routing**. В действующей конфигурации шесть правил `DOMAIN,…,REJECT` должны идти перед правилами маршрутизации.
 
 ```text
 https://raw.githubusercontent.com/Safronov-N/ru-routing-profiles/main/stash/adblock.stoverride
 ```
 
-Stash проверяет список [MetaCubeX `category-ads-all`](https://github.com/MetaCubeX/meta-rules-dat/blob/meta/geo/geosite/category-ads-all.yaml) каждые 24 часа. Соединения с известными рекламными и телеметрическими доменами получают `REJECT` до правил маршрутизации. API Ozon (`xapi.ozon.*`, `xapi.ozonru.me`), OneSignal и переходы по ссылкам `clck.yandex.*` обрабатываются обычными маршрутами. Фильтр работает на уровне доменов, поэтому реклама с того же домена, что и контент, останется.
+Фильтр отклоняет соединения с шестью рекламными хостами Google и Яндекса по точному имени. Список хранится в самом дополнении. Запросы к аналитике, push-сервисам, API приложений и остальным хостам идут по обычным правилам маршрутизации. Реклама с других хостов или с одного домена с контентом продолжит загружаться.
 
-После подключения откройте `https://www.google-analytics.com` и `https://mc.yandex.ru`. В журнале соединений ожидается `REJECT`. Для отключения фильтра достаточно выключить **Independent RU AdBlock**.
+Для проверки откройте `https://googleads.g.doubleclick.net` или `https://an.yandex.ru`. Ожидаемое решение в журнале соединений — `REJECT` по правилу `DOMAIN`. Приложение может повторять рекламный запрос после отказа, а реклама за вознаграждение может оказаться недоступна. Для максимальной совместимости выключите **Independent RU AdBlock**.
 
 ## Shadowrocket
 
