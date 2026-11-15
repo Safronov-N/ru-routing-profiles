@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: 777d056afe68b2643c1ef15f80e7bde3dfa149b1
+# Source commit: 3e5a6807b0f31268e96b321440564fc809996b22
 DOMAIN,kp-config-smart-tv.akamaized.net
 DOMAIN,kp-configs-smart-tv.s3.eu-central-1.amazonaws.com
 DOMAIN,mvideo.edna.io
@@ -686,6 +686,7 @@ DOMAIN-SUFFIX,unidraw.io
 DOMAIN-SUFFIX,unirest.tech
 DOMAIN-SUFFIX,userapi.com
 DOMAIN-SUFFIX,usocial.pro
+DOMAIN-SUFFIX,vigo.tech
 DOMAIN-SUFFIX,vimu.tv
 DOMAIN-SUFFIX,viqeo.tv
 DOMAIN-SUFFIX,viqeotv.com
