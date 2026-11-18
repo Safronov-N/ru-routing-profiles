@@ -17,6 +17,10 @@ dns:
   # Не наследуем дополнительный fallback и его географическую фильтрацию.
   fallback: #!replace
     []
+  # Для локальных имён приложению нужен реальный адрес из локальной сети.
+  fake-ip-filter:
+    - '+.local'
+    - '+.home.arpa'
   # Словарь объединяется с частными политиками подписки, а не заменяет его целиком.
   nameserver-policy:
     '+.local': system
@@ -69,4 +73,3 @@ dns:
     'rule-set:ru-direct-foreign-domain': #!replace
       - 'https://common.dot.dns.yandex.net/dns-query'
       - 'https://8.8.8.8/dns-query'
-  # hosts, fake-ip-filter и IPv6 сохраняются из основного профиля.

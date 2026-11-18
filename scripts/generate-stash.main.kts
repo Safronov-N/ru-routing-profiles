@@ -203,12 +203,13 @@ check(privateIpv6Ranges.all { it in directIpProvider.payload }) {
     "В DIRECT_IP отсутствуют ожидаемые локальные IPv6-сети"
 }
 val privateIpv6Rules = privateIpv6Ranges.map { range -> "IP-CIDR6,$range,DIRECT,no-resolve" }
+val mdnsRules = listOf("IP-CIDR,224.0.0.251/32,DIRECT,no-resolve", "IP-CIDR6,ff02::fb/128,DIRECT,no-resolve")
 val localDomainSuffixes = listOf("local", "home.arpa")
 val localDomainRules = localDomainSuffixes.map { suffix -> "DOMAIN-SUFFIX,$suffix,DIRECT" }
 val firstDomainIndex = stashRules.indexOfFirst { it.startsWith("DOMAIN") || it.startsWith("RULE-SET,") }
 check(firstDomainIndex >= 0) { "Не найдена доменная фаза Stash" }
 // Stash может обслуживать IPv6 независимо от ipv6=false в исходном Shadowrocket-профиле.
-val localRules = (privateIpv6Rules + localDomainRules).filterNot { it in stashRules }
+val localRules = (privateIpv6Rules + mdnsRules + localDomainRules).filterNot { it in stashRules }
 stashRules.addAll(firstDomainIndex, localRules)
 
 val generatedFiles = linkedMapOf<Path, String>()
@@ -228,11 +229,13 @@ fun renderOverride(): String =
         appendLine("mode: rule")
         appendLine()
         appendLine("# Группа использует серверы и провайдеров действующей подписки.")
-        appendLine("# До подключения выберите рабочий сервер; пустая подписка не поддерживается.")
+        appendLine("# Выберите рабочий сервер. REJECT предотвращает переход на DIRECT при пустой подписке.")
         appendLine("proxy-groups:")
         appendLine("  - name: RU-PROXY")
         appendLine("    type: select")
         appendLine("    include-all: true")
+        appendLine("    proxies:")
+        appendLine("      - REJECT")
         appendLine()
         appendLine("rule-providers:")
         providers.values.forEach { provider ->
@@ -301,6 +304,9 @@ generatedFiles[outputDirectory.resolve("dns.stoverride")] =
         appendLine("  # Не наследуем дополнительный fallback и его географическую фильтрацию.")
         appendLine("  fallback: #!replace")
         appendLine("    []")
+        appendLine("  # Для локальных имён приложению нужен реальный адрес из локальной сети.")
+        appendLine("  fake-ip-filter:")
+        localDomainSuffixes.forEach { suffix -> appendLine("    - '+.$suffix'") }
         appendLine("  # Словарь объединяется с частными политиками подписки, а не заменяет его целиком.")
         appendLine("  nameserver-policy:")
         localDomainSuffixes.forEach { suffix -> appendLine("    '+.$suffix': system") }
@@ -308,7 +314,6 @@ generatedFiles[outputDirectory.resolve("dns.stoverride")] =
             appendLine("    ${yamlQuote(key)}: #!replace")
             servers.forEach { appendLine("      - ${yamlQuote(it)}") }
         }
-        appendLine("  # hosts, fake-ip-filter и IPv6 сохраняются из основного профиля.")
     }
 
 // Пишем результаты только после проверки всех входных списков и правил.

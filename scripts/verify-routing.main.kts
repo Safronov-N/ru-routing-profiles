@@ -1270,8 +1270,10 @@ fun readStashOverride(path: Path): StashOverrideCheck {
     check(stashYamlSection(lines, "proxy-groups") == listOf(
         "  - name: RU-PROXY",
         "    type: select",
-        "    include-all: true"
-    )) { "$path: группа должна использовать существующие серверы без DIRECT и автопереключения" }
+        "    include-all: true",
+        "    proxies:",
+        "      - REJECT"
+    )) { "$path: группа должна брать серверы подписки и содержать REJECT на случай пустого списка" }
     val providers = linkedMapOf<String, StashProviderCheck>()
     var current: StashProviderCheck? = null
     stashYamlSection(lines, "rule-providers").forEach { line ->
@@ -1335,6 +1337,7 @@ fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, Lis
         "default-nameserver",
         "nameserver",
         "fallback",
+        "fake-ip-filter",
         "nameserver-policy"
     )) { "$path: неожиданные DNS-поля; private DNS, Fake IP и IPv6 нельзя затирать" }
     check("follow-rule: false" in dns && "skip-cert-verify: false" in dns) {
@@ -1354,6 +1357,11 @@ fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, Lis
     }
     check("fallback: #!replace" in dns && stashYamlSection(dns, "fallback") == listOf("  []")) {
         "$path: унаследованный fallback должен быть отключён, а не дополнен"
+    }
+    val localKeys = setOf("+.local", "+.home.arpa")
+    check("fake-ip-filter:" in dns &&
+        stashYamlSection(dns, "fake-ip-filter") == localKeys.map { "  - '$it'" }) {
+        "$path: .local и home.arpa должны получать реальные IP с сохранением исключений подписки"
     }
     check("nameserver-policy:" in dns) { "$path: пользовательские частные DNS-политики должны сохраняться" }
     val policies = linkedMapOf<String, MutableList<String>>()
@@ -1376,7 +1384,6 @@ fun verifyStashDns(remote: StashOverrideCheck, decodedProviders: Map<String, Lis
     check(policies.values.all { it.isNotEmpty() && it.distinct().size == it.size }) {
         "$path: пустая DNS-политика или повторные резолверы"
     }
-    val localKeys = setOf("+.local", "+.home.arpa")
     check(policies.filterValues { "system" in it }.keys == localKeys &&
         localKeys.all { policies[it] == listOf("system") }) {
         "$path: system допустим только для явно локальных пространств имён"
@@ -1537,7 +1544,12 @@ fun verifyStash() {
     }
     val firstDomain = expectedOrder.indexOfFirst { it.startsWith("DOMAIN") || it.startsWith("RULE-SET,") }
     check(firstDomain >= 0) { "Stash: не найдена доменная фаза" }
-    val localRules = privateIpv6Rules + listOf("DOMAIN-SUFFIX,local,DIRECT", "DOMAIN-SUFFIX,home.arpa,DIRECT")
+    val localRules = privateIpv6Rules + listOf(
+        "IP-CIDR,224.0.0.251/32,DIRECT,no-resolve",
+        "IP-CIDR6,ff02::fb/128,DIRECT,no-resolve",
+        "DOMAIN-SUFFIX,local,DIRECT",
+        "DOMAIN-SUFFIX,home.arpa,DIRECT"
+    )
     expectedOrder.addAll(firstDomain, localRules.filterNot { it in expectedOrder })
     check(remote.ruleLines == expectedOrder) { "Stash: изменён полный порядок DOMAIN/IP-правил" }
     check(remote.ruleLines.count { it.startsWith("MATCH,") } == 1 &&
@@ -1602,7 +1614,7 @@ fun verifyStash() {
         }
         error("Stash: для $target не найден маршрут")
     }
-    listOf("::1", "fd12:3456::1", "fe80::1").forEach { address ->
+    listOf("::1", "fd12:3456::1", "fe80::1", "224.0.0.251", "ff02::fb").forEach { address ->
         val (rule, lookups) = routeWithDns(address)
         check(rule.policy == "DIRECT" && rule.noResolve && lookups == 0) {
             "Stash $address должен идти напрямую без DNS"
@@ -1632,7 +1644,7 @@ fun verifyStash() {
     check(unknownPrivate.first.policy == "DIRECT" && unknownPrivate.second == 1) {
         "Stash: private DNS-ответ должен обрабатываться после доменной фазы"
     }
-    listOf("1.1.1.1", "2606:4700:4700::1111").forEach { address ->
+    listOf("1.1.1.1", "2606:4700:4700::1111", "224.0.0.250", "ff02::fa").forEach { address ->
         val (rule, lookups) = routeWithDns(address)
         check(rule.policy == "PROXY" && lookups == 0) { "Stash $address ошибочно попал в DIRECT" }
     }
@@ -1642,7 +1654,7 @@ fun verifyStash() {
     }
     verifyStashDns(remote, decodedProviders)
     println("Stash: ${sourceLists.size} автообновляемых providers, $payloadCount записей проверены")
-    println("Stash: ${expectations.size} маршрутов, IPv6 private и порядок DNS/IP проверены")
+    println("Stash: ${expectations.size} маршрутов, локальные сети, mDNS и порядок DNS/IP проверены")
 }
 
 verifyStash()
