@@ -1,5 +1,5 @@
 # Сгенерировано из проверенного источника
-# Source commit: e6601e0d5f5a2b7504b3b11f1bd7ec12818ab46a
+# Source commit: f68dab92e2ce656bbd81a4ae424de79b179f0f77
 DOMAIN,a4e8s8k3.map2.ssl.hwcdn.net
 DOMAIN,apple.com.akadns.net
 DOMAIN,appleworldwidedeveloper.hb-api.omtrdc.net
@@ -1056,6 +1056,7 @@ DOMAIN-SUFFIX,faceit-cdn.net
 DOMAIN-SUFFIX,faceit.com
 DOMAIN-SUFFIX,facetime.net
 DOMAIN-SUFFIX,fasttrackreadysupport.com
+DOMAIN-SUFFIX,fce.gg
 DOMAIN-SUFFIX,femalefounderscomp.com
 DOMAIN-SUFFIX,finalcutpro.com
 DOMAIN-SUFFIX,find-apple.com
